@@ -28,7 +28,9 @@ set "PY=%CD%\.venv\Scripts\python.exe"
 
 :: Production/online mode must use the persistent key configured in .env.
 if defined INTERNAL_API_KEY goto internal_api_key_ready
-for /f "delims=" %%K in ('call "%PY%" -c "import os; from dotenv import load_dotenv; load_dotenv(); print(os.getenv('INTERNAL_API_KEY',''))"') do set "INTERNAL_API_KEY=%%K"
+for /f "tokens=1,* delims==" %%A in ('findstr /R /B /I "^INTERNAL_API_KEY=" "%CD%\\.env"') do (
+    if /I "%%A"=="INTERNAL_API_KEY" set "INTERNAL_API_KEY=%%B"
+)
 
 :internal_api_key_ready
 if not defined INTERNAL_API_KEY (

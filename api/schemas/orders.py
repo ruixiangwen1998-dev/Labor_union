@@ -21,3 +21,9 @@ class ScheduleCalculationRequest(BaseModel):
     target_service_days: int = Field(20, ge=1, description="目標服務天數")
     service_mode: str = Field("週休1日", description="排休模式: 週休1日/週休2日/連續服務")
     custom_holiday_rest_dates: Optional[List[date]] = Field(None, description="自訂放假日期列表")
+    custom_leave_dates: Optional[List[date]] = Field(None, description="自訂請假日期列表")
+    custom_rest_weekdays: Optional[List[int]] = Field(None, description="固定排休星期列表")
+    monthly_salary_base: Optional[float] = Field(None, description="月薪試算基準")
+
+class AssignmentRestDatesUpdateRequest(BaseModel):
+    rest_dates: List[str] = Field(..., description="自訂排休與國定假日放假日期列表 (YYYY-MM-DD)")

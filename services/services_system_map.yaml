@@ -6,7 +6,7 @@ modules:
     description: 主資料庫與 CRUD 操作服務；訂單公開識別一律使用唯一 case_no，並以同一案件編號載入 BeClass 服務細項；通用資料表瀏覽與更新不得再暴露
       legacy payments。
     source: services/db_service.py::safe_float,safe_int,safe_date,generate_virtual_account,get_connection,_resolve_case_no,get_order_by_case_no,get_table_data,get_table_columns,update_table_row,parse_beclass_survey_details,get_order_details,get_case_order_details,create_order,assign_staff_to_order,update_order_status,update_order_full_details,add_or_update_holiday,delete_holiday,get_staff_monthly_schedule,save_order_rest_dates,generate_default_schedule,update_schedule_day,get_order_matches,create_or_get_match_record,update_matching_info_sent,reply_matching_inquiry,parse_client_district,backfill_client_payment_due_dates,sync_client_payment_due_dates_for_case_no,_sync_client_payment_due_dates_with_cursor,_count_missing_client_payment_due_dates
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -72,13 +72,13 @@ modules:
     - 不修改 API router、DataBrowserUI、PaymentSchema 或其他 DbService 函式。
     sub_map: services_layer
     state: validated
-    fan_in_snapshot: 7
+    fan_in_snapshot: 19
   RecommendService:
     type: service
     description: 月嫂與客戶條件智慧粗篩比對引擎。比對 clients.city/address 與 staff.service_regions，掃描檔期重疊
       (含 7 天預留備用期)，並精算匹配分與推薦列表。
     source: services/db_service.py::get_recommended_staff_for_order
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -112,7 +112,7 @@ modules:
     type: service
     description: 排班與行事曆精算引擎。包含 calculate_attendance_schedule 出勤天數精算、每週預設排休帶入、動態休假順延計算與國定假日加給計費。
     source: services/db_service.py::calculate_attendance_schedule
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -148,7 +148,7 @@ modules:
     type: service
     description: 提供可獨立測試的帳務邊界規則：服務指派時數與樓層費分配、同月嫂跨案待付款，以及成功／失敗／沖正交易的淨額計算。
     source: services/payment_rules.py::evaluate_payment_boundary
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -246,7 +246,7 @@ modules:
       staff payables, subsidy claims, and payment dates before any ledger snapshot
       is written.
     source: services/order_amount_calculator.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -343,7 +343,7 @@ modules:
     description: 以單一 canonical 投影讀取案件計價所需的訂單、客戶、服務指派與收款排程原始事實；支援呼叫端持有的 transaction
       cursor，避免帳務寫入流程另開連線讀到不同快照。
     source: services/accounting_source_projection.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -410,7 +410,7 @@ modules:
     type: service
     description: 提供新帳務表的服務指派、月嫂應付與轉帳寫入服務；所有金額先經 PaymentRules 驗證，舊 payments 不得被讀寫。
     source: services/payment_service.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -469,7 +469,7 @@ modules:
     description: 記錄月嫂實際轉帳、失敗、退匯與沖正，並以成功交易淨額重算 staff_payments.amount_paid、paid_at 與
       payment_status。
     source: services/staff_payment_transactions.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -525,7 +525,7 @@ modules:
     type: service
     description: 重算客戶訂金、第一期、第二期實收；退還補助金額尚未啟用，不參與目前交易計算。
     source: services/client_payment_transactions.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -580,7 +580,7 @@ modules:
     type: service
     description: 將客戶金流交易實際寫入新表，並依所有交易重算客戶帳務摘要與各期結清日。
     source: services/client_payment_writer.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -663,7 +663,7 @@ modules:
     type: import_contract
     description: 定義三種銀行格式共用的正規化流水列契約，並在事件分類或資料庫寫入前驗證欄位與型別。
     source: scripts/imports/finance_normalized_row.py::validate_normalized_row
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -722,7 +722,7 @@ modules:
     type: import_adapter
     description: 依工作表名稱與表頭內容辨識歷史、台新、永豐三種銀行對帳單格式，不依賴檔名。
     source: scripts/imports/finance_formats/detector.py::detect_statement_format
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -775,7 +775,7 @@ modules:
     type: service
     description: 由銀行流水的穩定交易特徵建立系統 SHA-256 去重指紋，只用於跨檔案辨識同一銀行列，不宣稱為銀行原生流水號。
     source: services/finance_transaction_fingerprint.py::build_dedup_fingerprint
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -827,7 +827,7 @@ modules:
     type: import_adapter
     description: 從多分頁歷史對帳單找到指定表頭並轉為共用銀行流水列，不依賴固定分頁位置。
     source: scripts/imports/finance_formats/legacy.py::normalize_legacy_rows
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -881,7 +881,7 @@ modules:
     type: import_adapter
     description: 將台新交易明細查詢的九欄格式轉為共用銀行流水列，保留備註中的對象姓名與帳號原文。
     source: scripts/imports/finance_formats/taishin.py::normalize_taishin_rows
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -935,7 +935,7 @@ modules:
     type: import_adapter
     description: 將永豐交易明細報表的十五欄格式轉為共用銀行流水列，完整保留銷帳編號與銀行參考資訊，並依已確認欄位優先序解析支出對象帳號。
     source: scripts/imports/finance_formats/sinopac.py::normalize_sinopac_rows
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -995,7 +995,7 @@ modules:
     type: import_pipeline
     description: 以內容偵測三種 Excel 格式，呼叫對應 adapter 並回傳同一 normalized row 契約。
     source: scripts/imports/finance_statement_normalizer.py::normalize_workbook
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1049,12 +1049,12 @@ modules:
     non_goals: []
     sub_map: services_layer
     state: planned
-    fan_in_snapshot: 5
+    fan_in_snapshot: 4
   FinanceTransactionClassifier:
     type: service
     description: 依已確認銀行、方向、銷帳編號、備註與精確帳號候選分類銀行事件；分類不等於核銷。
     source: services/finance_transaction_classifier.py::classify_finance_transaction
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1114,13 +1114,13 @@ modules:
     non_goals: []
     sub_map: services_layer
     state: planned
-    fan_in_snapshot: 4
+    fan_in_snapshot: 3
   FinanceImportStagingService:
     type: service
     description: 將一次 Excel 正規化結果以 append-only 方式寫入 staging；已存在 fingerprint 只新增來源 occurrence，不覆寫
       canonical row 或正式帳務。
     source: services/finance_import_staging.py::stage_finance_rows
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1182,12 +1182,12 @@ modules:
     non_goals: []
     sub_map: services_layer
     state: planned
-    fan_in_snapshot: 5
+    fan_in_snapshot: 4
   SubsidyClaimWorkflowService:
     type: service
     description: 以明確年度、季度與 revision 建立正式補助申請快照，並執行送件及正常全額核准狀態轉換。
     source: services/subsidy_claim_workflow.py::create_subsidy_claim_batch,submit_subsidy_claim_batch,approve_subsidy_claim_batch
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1248,7 +1248,7 @@ modules:
     type: service
     description: 以呼叫端明確提供的月份與 revision 建立服務人員跨案件月結快照並完成正常月結。
     source: services/staff_monthly_settlements.py::create_staff_monthly_settlement,finalize_staff_monthly_settlement
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1311,7 +1311,7 @@ modules:
     type: service
     description: 由案件明確條件建立不可由銀行實收反推的三階段客戶應收快照。
     source: services/client_payment_snapshots.py::create_client_payment_snapshot
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1374,7 +1374,7 @@ modules:
     type: service
     description: 在客戶三階段已全額實付後，以明確計算結果與到期日啟用 canonical 補助款退還義務。
     source: services/client_subsidy_return_obligations.py::activate_subsidy_return_obligation,calculate_subsidy_return_due_date
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1441,7 +1441,7 @@ modules:
     type: service
     description: 將已唯一匹配的台新支出登記為 subsidy_return refund 交易，並重算 canonical 已退與完成日。
     source: services/client_subsidy_return_transactions.py::record_client_subsidy_return
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1516,7 +1516,7 @@ modules:
     type: service
     description: 將唯一且全額相符的台新政府入款核銷至一個正式已核准申請批次及其案件明細。
     source: services/government_subsidy_reconciliation.py::reconcile_government_subsidy
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1582,7 +1582,7 @@ modules:
     type: service
     description: 將唯一服務人員帳號與唯一月結的銀行支出保存為獨立實際轉帳，並以明確 allocation 核銷月結明細。
     source: services/staff_actual_transfers.py::reconcile_staff_actual_transfer
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1649,12 +1649,12 @@ modules:
     non_goals: []
     sub_map: services_layer
     state: planned
-    fan_in_snapshot: 3
+    fan_in_snapshot: 2
   FinanceIdentityMapLoader:
     type: service
     description: 從正式客戶補助退還義務與服務人員收款資料建立精確帳號 mapping，供銀行流水分類使用；姓名只保留顯示，不作匹配鍵。
     source: services/finance_identity_maps.py::load_finance_identity_maps
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1713,7 +1713,7 @@ modules:
     type: service
     description: 從永豐銀行的銷帳編號依既有虛擬帳號規則解出案件編號，並驗證正式案件唯一存在。
     source: services/client_virtual_account_resolver.py::resolve_client_virtual_account
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1769,7 +1769,7 @@ modules:
     type: service
     description: 將已分類且虛擬帳號唯一命中案件的永豐入款，依訂金、第一期、第二期順序核銷至客戶帳務。
     source: services/client_receipt_reconciliation.py::reconcile_client_receipt
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1842,7 +1842,7 @@ modules:
     description: 由任意檔名的歷史、台新或永豐 Excel 建立匯入批次；先 append-only 保存與分類所有流水，再只對唯一且完全符合 P0
       正常規則的新流水執行正式核銷。
     source: scripts/imports/import_finance_excel.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -1955,7 +1955,7 @@ modules:
     non_goals: []
     sub_map: services_layer
     state: planned
-    fan_in_snapshot: 3
+    fan_in_snapshot: 2
     known_symbols:
     - _dispatch_inserted_row
     - _existing_receipt_transactions
@@ -1980,7 +1980,7 @@ modules:
     type: integration_test
     description: 驗證 B3 補助款退還客戶由台新 Excel 經 normalization、append-only staging、分類至正式退款核銷的完整鏈路，並確認差額、身分歧義與負向事件不會造成正式帳務副作用。
     source: tests/test_finance_import_client_subsidy_return_integration.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2075,7 +2075,7 @@ modules:
     type: integration_test
     description: 驗證 B4 政府補助撥入由台新 Excel 經 normalization、append-only staging、分類至政府補助核銷的完整鏈路，並確認差額、多候選、分次與跨批次款項不會被自動核銷。
     source: tests/test_finance_import_government_subsidy_integration.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2177,15 +2177,10 @@ modules:
     description: 驗證 B5 服務人員實際轉帳由永豐或台新 Excel 經 normalization、append-only staging、分類、月結候選至
       transfer/allocation 核銷的完整鏈路，並確認帳號歧義、跨月候選、舊制金額差異與 component 重複不會造成正式帳務副作用。
     source: tests/test_finance_import_staff_actual_transfer_integration.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
-    dependencies:
-    - FinanceImport
-    - FinanceStatementNormalizationPipeline
-    - FinanceImportStagingService
-    - FinanceTransactionClassifier
-    - StaffActualTransferService
+    dependencies: []
     input:
       bank_workbook_fixtures: 永豐一般薪資支出與台新舊制第二次補助款支出的最小真實 Excel fixtures
       staff_identity_fixture: 同一服務人員的多個有效完整帳號，以及共享帳號的歧義資料
@@ -2289,7 +2284,7 @@ modules:
     description: 將 pending、review 與 warnings 以 deterministic identity 保存為警示；只負責偵測持久化與
       detected event 的重跑保護。
     source: services/finance_alert_detection.py::create_or_get_finance_alert
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2350,7 +2345,7 @@ modules:
     type: service
     description: 附加人工 workflow 或既有正式交易的不可變警示事件；只驗證來源引用與事件去重，不建立或修改正式交易。
     source: services/finance_alert_events.py::append_finance_alert_event
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2422,7 +2417,7 @@ modules:
     type: service
     description: 提供財務警示的稽核查詢、原子認領與解除；只更新人工 workflow projection，事件新增委派給 FinanceAlertEventService。
     source: services/finance_alert_workflow.py::list_finance_alerts,get_finance_alert,claim_finance_alert,resolve_finance_alert
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2492,7 +2487,7 @@ modules:
     type: integration_test
     description: 驗證 B6 pending／review 警示的偵測持久化、人工認領／解除、deterministic rerun 與部分殘留保護。
     source: tests/test_finance_alert_workflow_lifecycle_integration.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2577,7 +2572,7 @@ modules:
     type: integration_test
     description: 驗證 B6 failed／退匯／重匯／沖正警示只引用既有正式事件，且不建立另一份正式淨額或帳務投影。
     source: tests/test_finance_alert_formal_event_integration.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2658,7 +2653,7 @@ modules:
     type: service
     description: 由已完成月結產生每位服務人員每月一筆待匯資料；系統不執行銀行轉帳。
     source: services/payment_batch_service.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2718,7 +2713,7 @@ modules:
     type: service
     description: 依完工季度產生 4／7／10／1 月補助申請清單，並提供年度補助總覽。
     source: services/subsidy_claim_service.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -2782,7 +2777,7 @@ modules:
     type: service
     description: 依預定付款／退款日期查詢指定月份曾經應出帳的完整清單，並產生會計查詢預覽與銀行匯款 Excel；付款狀態只供顯示，不影響歷史清單納入。解約退款功能不啟用。
     source: services/accounts_payable_export.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies:
@@ -2875,7 +2870,7 @@ modules:
     description: Build read-only quarterly subsidy reconciliation registers and annual
       summaries, including downloadable Excel workbooks.
     source: services/subsidy_reconciliation_register.py
-    domain: null
+    domain: Services
     subsystem: null
     map_file: services\services_system_map.md
     dependencies: []
@@ -2957,3 +2952,978 @@ modules:
     - build_annual_subsidy_summary
     - build_quarterly_subsidy_register
     - extract_employer_identity_card
+  OrderScheduleCalculationService:
+    type: service
+    description: 多指派與全訂單出勤排班精算、試算預覽與完工日順延協調服務。
+    source: services/order_schedule_calculation_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input:
+      start_date: 服務起始日期 (YYYY-MM-DD)。
+      service_days: 預定服務天數 (int)。
+      service_hours_per_day: 每日服務時數 (int)。
+      custom_holiday_rest_dates: 自訂國定假日排休列表 (list[str])。
+      custom_leave_dates: 自訂請假日期列表 (list[str])。
+      custom_rest_weekdays: 自訂每週固定排休日列表 (list[int])。
+      monthly_salary_base: 月薪基數天數 (int)。
+    output:
+      assigned_end_date: 精算後預計完工日 (YYYY-MM-DD)。
+      total_rest_days: 總排休日數 (int)。
+      actual_service_hours: 實際總服務時數 (int)。
+      calculated_schedules: 每日出勤試算詳細清單。
+    exceptions: []
+    invariants:
+    - 本 Service 定義為純計算與跨指派協調服務，嚴禁直接執行 `DELETE FROM staff_schedule WHERE case_no =
+      %s`。
+    - 必須合併 custom_holiday_rest_dates 與 custom_leave_dates 為聯集，不得使用 OR 條件二選一。
+    - 必須完整轉傳與處理 custom_rest_weekdays 與 monthly_salary_base。
+    - 單一 assignment 修改排休時不得直接使用本 Service 覆寫全局 orders.custom_rest_dates 或 orders.actual_end_date。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_order_schedule_calculation_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - calculate_order_attendance_schedule
+  AssignmentScheduleRestDateService:
+    type: service
+    description: 以 assignment_id 為唯一權屬進行月嫂排休與動態順延保存服務。
+    source: services/assignment_schedule_rest_date_service.py::save_assignment_rest_dates
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    - AssignmentScheduleRestDateValidationHelpers
+    - AssignmentScheduleRestDatePersistenceHelpers
+    input:
+      assignment_id: 服務指派唯一識別碼。
+      rest_dates: 排休日期列表 (YYYY-MM-DD)。
+      operator: 操作者或申請來源。
+    output:
+      assignment_id: 服務指派識別碼。
+      case_no: 所屬案件編號。
+      staff_id: 服務月嫂 ID。
+      previous_assigned_end_date: 變更前預計完工日。
+      new_assigned_end_date: 計算後新完工日。
+      canonical_rest_dates: 去重且穩定排序之標準排休日期列表。
+      deleted_day_count: 刪除之舊排班天數。
+      inserted_day_count: 新增之排班天數。
+      actual_hours: 計算後實際服務時數。
+      status: 執行狀態 (success, not_found, validation_error, conflict, requires_review)。
+      review_reasons: 需人工審查或衝突之原因列表。
+      audit_id: 異動稽核紀錄 ID。
+    exceptions: []
+    invariants:
+    - assignment 查詢必須嚴格綁定 WHERE case_staff_assignments.id = assignment_id；找不到時回傳 not_found。
+    - 嚴禁將 assignment_id 當作 staff_id 使用，嚴禁依據 case_no、姓名、日期或最近一筆指派推測 assignment。
+    - rest_dates 必須嚴格驗證 YYYY-MM-DD 格式、去重並穩定排序；任一非法日期必須整筆失敗，不得靜默忽略。
+    - 已取消之 assignment 不得進行任何排修或排班修改。
+    - 若已存在付款鎖、月結鎖、人工 actual_hours 覆寫鎖或其他正式鎖定，必須回傳 conflict/requires_review。
+    - 不得使用整張訂單 service_days 為單一 assignment 產生完整排班，必須以 assignment 自身的開工日、完工日、allocated/planned
+      hours 或正式 ownership 計算；若現有 schema 無法唯一決定服務天數，必須回傳 requires_allocation/requires_review，不得任意猜測。
+    - 所有 staff_schedule 異動必須嚴格限定 WHERE assignment_id = %s；嚴禁執行 DELETE FROM staff_schedule
+      WHERE case_no = %s。
+    - 嚴禁修改其他 assignment 的排班；不得自動延伸或移動下一位月嫂的 assignment；若順延後與下一指派重疊，必須回傳 409 conflict/requires_review。
+    - 所有讀鎖、刪除、插入、assignment 更新及 audit 寫入必須在同一資料庫 Transaction 內執行，任一步驟失敗全部 rollback。
+    - 單一 assignment 不得直接覆寫 orders.custom_rest_dates 或 orders.actual_end_date。
+    - 本 Service 不得拋出 FastAPI HTTPException，必須回傳領域結果或 Domain Error，由 Router 負責 HTTP
+      狀態碼映射。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_assignment_rest_date_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm:
+    - '1. validate: 驗證輸入參數與 rest_dates 之 YYYY-MM-DD 格式。'
+    - '2. canonicalize: 對 rest_dates 進行去重與排序取得 canonical_rest_dates。'
+    - '3. lock/read assignment: 在 Transaction 內依 assignment_id 讀取並鎖定目標指派。'
+    - '4. check cancellation/payment/settlement/hour locks: 檢查指派是否取消或存在付款/月結/人工時數鎖。'
+    - '5. determine assignment-owned target: 依指派自身額度與 ownership 計算目標天數與完工日。'
+    - '6. check overlap: 檢查順延完工日是否與同案件其他指派重疊。'
+    - '7. calculate: 重新計算單日排班與休假。'
+    - '8. transactional replace: 在同一 Transaction 內更新 staff_schedule。'
+    - '9. update assignment-owned summary: 更新指派專屬完工日與狀態。'
+    - '10. audit: 寫入異動稽核日誌。'
+    - '11. return result: 回傳處理結果結構。'
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals:
+    - 不由單一 assignment 節點計算或寫入訂單整體完工日與全局 custom_rest_dates (改由獨立跨指派協調節點處理)。
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+  AssignmentScheduleRestDateValidationHelpers:
+    type: function
+    description: 排休服務專用的輸入正規化與穩定領域失敗結果 helper。
+    source: services/assignment_schedule_rest_date_service.py::_as_positive_int,_as_date,_as_rest_date_string,_as_positive_decimal,_normalise_rest_dates,_snapshot_failure
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies: []
+    input:
+      assignment_id: 待驗證之 assignment 識別值。
+      rest_dates: 待正規化的排休日期集合。
+    output:
+      validated_values: 嚴格正整數、正 Decimal 與 ISO 日期值。
+      canonical_rest_dates: 去重並排序的 YYYY-MM-DD 字串陣列。
+      failure_result: 穩定的領域失敗結果。
+    exceptions: []
+    invariants:
+    - assignment_id 必須為正整數，不得接受 bool、零、負數或 staff_id fallback。
+    - rest_dates 必須為陣列；任一元素不是嚴格 YYYY-MM-DD 字串時整批失敗。
+    - 日期字串不得 strip、不得接受非零填充格式、date 或 datetime 物件。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_assignment_rest_date_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+  AssignmentScheduleRestDatePersistenceHelpers:
+    type: function
+    description: 排休 transaction 內的同案 assignment 讀取與正式鎖定條件驗證 helper。
+    source: services/assignment_schedule_rest_date_service.py::_load_case_assignments,_assert_assignment_is_unlocked
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input:
+      cursor: 現有 transaction cursor。
+      case_no: 目標案件編號。
+      assignment_id: 目標 assignment 唯一識別。
+    output:
+      case_assignments: 同案件正式 assignment 列。
+      lock_validation: 可修改或 conflict。
+    exceptions: []
+    invariants:
+    - 必須重用呼叫端既有 cursor，不得自行建立 connection 或 commit。
+    - assignment ownership 僅能使用 assignment_id，不得猜測 staff_id 或最近一筆 assignment。
+    - 已取消、付款鎖、月結鎖或人工工時鎖必須 fail-closed。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_assignment_rest_date_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm:
+    - 使用呼叫端 transaction cursor 依 case_no 穩定讀取同案 assignments，不自行建立 connection。
+    - 依 assignment_id 讀取正式鎖定狀態，依序檢查取消、付款、月結與人工工時鎖。
+    - 任一鎖定條件成立即拋出 conflict；helper 不得 commit、rollback 或修改排班。
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+  StaffMonthlyCalendarScheduleService:
+    type: service
+    description: 由 case_staff_assignments 與 staff_schedule.assignment_id 查詢月嫂指定年月檔期排班視圖服務。
+    source: services/staff_monthly_calendar_schedule_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input:
+      staff_id: 月嫂 ID (int)。
+      year: 年份 (int)。
+      month: 月份 (int, 1-12)。
+    output:
+      staff_id: 月嫂 ID。
+      year: 年份。
+      month: 月份。
+      days: 每日檔期排班物件陣列 (含 work_date, status, assignment_id, case_no, staff_id, client_name,
+        is_work_day, is_double_pay, notes)。
+      schedule_map: 舊版 UI 相容結構 (可選)。
+    exceptions: []
+    invariants:
+    - 嚴禁使用 legacy `get_staff_monthly_schedule()` 與 `orders.staff_id` 決定月嫂檔期與權屬；必須
+      100% 由 `case_staff_assignments` 與 `staff_schedule.assignment_id` 產生月曆。
+    - 嚴禁使用 `case_no` 填入 `assignment_id` 欄位。
+    - 同日多指派 (assignment) 必須回傳多筆包含各自 assignment_id 之 rows 紀錄，嚴禁使用日期 Key 的 Dictionary
+      靜默覆蓋任何一筆指派。
+    - 歷史遺留 `assignment_id IS NULL` 之排班資料必須明確排除或獨立標記為 unassigned，不得任意猜測或歸併 ownership。
+    - days 陣列中每筆物件必須完整包含：work_date, status, assignment_id, case_no, staff_id, client_name,
+      is_work_day, is_double_pay, notes。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_staff_monthly_calendar_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - _as_date
+    - _coerce_bool
+    - _priority_status
+    - get_staff_monthly_calendar_schedule
+  MatchRecordIdempotentService:
+    type: service
+    description: 原子化且防範高併發 Duplicate Key 之媒合紀錄建立與查詢服務。
+    source: services/match_record_idempotent_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input:
+      case_no: 案件編號 (str)。
+      staff_id: 服務人員 ID (int)。
+      response_type: 媒合意向或回覆狀態 (str)。
+      notes: 備註說明 (str, 可選)。
+    output:
+      match_id: 媒合紀錄 ID (int)。
+      case_no: 案件編號。
+      staff_id: 服務人員 ID。
+      status: 處理狀態 (success, existing)。
+      is_duplicate: 是否為重複點擊/更新紀錄 (bool)。
+    exceptions: []
+    invariants:
+    - 唯一邏輯鍵 (UNIQUE KEY) 必須綁定 `(case_no, staff_id)` 組合。
+    - 必須使用 `INSERT INTO matching_records ... ON DUPLICATE KEY UPDATE` 或完全等冪之 Transaction
+      查詢處置，防範使用者快速二次點擊引發之 IntegrityError，嚴禁拋出 HTTP 500。
+    - 嚴禁於本 Service 內覆寫或將 `orders.staff_id` 寫死。
+    - 不得產生無正式 ownership 綁定之無效 assignment 資料。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_match_record_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - create_or_get_match_record_idempotent
+    - get_order_match_records
+  DataBrowserAdminSchemaService:
+    type: service
+    description: 提供資料庫各表動態主鍵、可編輯白名單與唯讀權限中繼資料服務。
+    source: services/data_browser_admin_schema_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input:
+      table_name: 資料表名稱 (str)。
+      row_id: 資料列識別碼 (str，支援整數與字串主鍵 case_no)。
+      updates: 待更新欄位字典 (Dict[str, Any])。
+      operator_id: 經正式 AdminPrincipal 驗證的 username。
+      operator_role: 經正式 AdminPrincipal 驗證的 role。
+    output:
+      schema: 資料表之中繼權限字典 (含 primary_key, editable_columns, read_only, valid_options,
+        rows, columns)。
+      patch_result: 成功標記與影響列數。
+    exceptions: []
+    invariants:
+    - 必須設定可讀資料表白名單 (ALLOWED_TABLES)、可編輯資料表白名單與可編輯欄位白名單 (EDITABLE_COLUMNS)。
+    - primary_key 必須依據 TABLE_PRIMARY_KEYS 動態回傳 (例如 orders 轉為字串主鍵 case_no)，支援字串主鍵查詢與微調。
+    - 必須回傳 read_only 與 valid_options 中繼資料作為單一事實來源 (SSOT)。
+    - 對資料表、主鍵與 updates 之檢查必須採取 fail-closed 原則；若 updates payload 同時包含合法與非法欄位，必須整筆失敗並拋出
+      invalid_input，嚴禁自動過濾後僅套用部分欄位。
+    - 資料庫更新影響列數 (affected rowcount) 為 0 時，視為更新失敗 (not_found)，不得回傳成功亦不得寫入成功 audit 紀錄。
+    - Audit actor 與 role 必須由 Router 傳入的正式 AdminPrincipal 欄位提供，不得由 username 推測 role
+      或固定寫成 admin。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_data_browser_admin_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: validated
+    fan_in_snapshot: 1
+    known_symbols:
+    - get_data_browser_table_schema
+    - patch_data_browser_table_row
+  DataBrowserAdminAuditLogService:
+    type: service
+    description: 記錄 Data Browser 單列微調異動紀錄至 audit_logs 服務。
+    source: services/data_browser_admin_audit_log_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input:
+      action: 異動動作名稱 (如 DATA_BROWSER_PATCH)。
+      table_name: 目標資料表。
+      primary_key_value: 目標資料列主鍵值。
+      before_snapshot_hash: 異動前資料快照 Hash。
+      after_snapshot_hash: 異動後資料快照 Hash。
+      changed_fields: 變更欄位新舊值字典。
+      authenticated_actor: 經認證之操作者身分與 Role。
+      request_id: 請求追蹤 correlation id。
+    output:
+      audit_id: 成功寫入之稽核紀錄 ID。
+    exceptions: []
+    invariants:
+    - 資料修改與 audit 寫入必須完全共用同一資料庫 Connection / Transaction (update -> audit insert ->
+      commit)；若 audit 寫入失敗，資料修改必須全數 rollback。
+    - 嚴禁在 HTTP request 或 Service 執行期間動態發起 `CREATE TABLE IF NOT EXISTS audit_logs`；`audit_logs`
+      表結構必須由正式 DB Migration 預先建立。
+    - Audit 必須至少保存：authenticated_actor, action, table_name, primary_key_value, before_snapshot_hash,
+      after_snapshot_hash, changed_fields, occurred_at, request_id。
+    - 嚴禁記錄不必要的密碼、Token 或完整敏感個人資料 (PII)。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_data_browser_admin_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - _assert_required_audit_schema
+    - _snapshot_sha256
+    - _snapshot_to_json
+    - _split_audit_fields
+    - record_data_browser_patch_audit
+  AdminAuthService:
+    type: service
+    description: 資料庫管理員帳號、session token 驗證、角色階級與可信 AdminPrincipal 的正式認證服務。
+    source: services/admin_auth_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input:
+      credentials_or_session_token: 管理員登入憑證或 Bearer session token。
+      minimum_role: 需要比對時的最低管理員角色。
+    output:
+      admin_principal: 經資料庫驗證且包含 id、username、display_name、role 的 AdminPrincipal。
+    exceptions: []
+    invariants:
+    - Session token 只能以安全 Hash 儲存與查詢，不得將明文 token 寫入資料庫或 log。
+    - 角色只能使用既定 ROLE_LEVELS，授權比較不得信任 UI 傳入的 role 或 actor 字串。
+    - 停用、撤銷或過期 session 必須 fail-closed，不得產生 principal。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_admin_auth_security.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: medium
+    algorithm:
+    - 登入時正規化 username、驗證 scrypt 密碼 Hash，並只為啟用帳號建立具到期時間的隨機 session token。
+    - 僅保存 session token 的 SHA-256 Hash；查詢 session 時同時檢查未撤銷、未過期及帳號仍啟用。
+    - 將資料庫身分轉成不可變 AdminPrincipal，角色比較只使用 ROLE_LEVELS。
+    - 撤銷、續期或 audit 寫入各自使用明確 transaction；任何資料庫錯誤不得偽造成功結果。
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 3
+    known_symbols:
+    - AdminPrincipal.as_dict
+    - _token_hash
+    - _utc_now_naive
+    - authenticate_admin
+    - create_admin_user
+    - get_admin_session
+    - has_required_role
+    - hash_admin_password
+    - record_admin_audit
+    - renew_admin_session
+    - revoke_admin_session
+    - verify_admin_password
+  JsonConfigService:
+    type: service
+    description: 既有 JSON 設定檔的路徑、讀取、revision、寫入與項目查找 helper 服務。
+    source: services/json_config_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 4
+    known_symbols:
+    - config_path
+    - config_revision
+    - find_by_id
+    - read_config
+    - read_raw_config
+    - upsert_by_id
+    - write_config
+  LineLiffConfigService:
+    type: service
+    description: 既有 LIFF 設定快照、歷史版本列舉與指定 revision 讀取服務。
+    source: services/line_liff_config_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - JsonConfigService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - _read_history
+    - _write_history
+    - get_liff_snapshot
+    - list_liff_history
+    - snapshot_liff_config
+  LineLiffIdentityService:
+    type: service
+    description: 既有 LIFF token 必填判斷與 LINE 使用者身分解析服務。
+    source: services/line_liff_identity_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 0
+    known_symbols:
+    - liff_token_required
+    - resolve_line_user_id
+  LineReviewService:
+    type: service
+    description: 既有 LINE 審核摘要、查詢與核准／駁回決策服務。
+    source: services/line_review_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    - LineRichMenuService
+    - LineTaskService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - LineReviewStateConflictError.__init__
+    - _as_int
+    - _ensure_order_for_case_no
+    - _load_text_templates
+    - _lock_pending_request
+    - _mask_line_id
+    - _record_decision
+    - _staff_rich_menu_id
+    - _template
+    - _utc_naive
+    - approve_line_review
+    - get_line_review
+    - get_line_review_summary
+    - list_line_reviews
+    - reject_line_review
+  LineRichMenuService:
+    type: service
+    description: 既有 LINE Rich Menu 發布工作、查詢、重試與排程處理服務。
+    source: services/line_rich_menu_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    - JsonConfigService
+    - LineTaskService
+    - MediaStorageService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 3
+    known_symbols:
+    - RichMenuPublishError.__init__
+    - _claim_publications
+    - _complete_publication
+    - _decode_json
+    - _fail_publication
+    - _line_request
+    - _publish_to_line
+    - _write_legacy_id
+    - build_line_action
+    - build_line_menu
+    - create_publication_job
+    - get_current_rich_menu_id
+    - get_publication
+    - import_legacy_rich_menu_ids
+    - list_publications
+    - next_publication_run_at
+    - process_due_publications
+    - recover_stale_publications
+    - retry_publication
+  LineTaskAdminService:
+    type: service
+    description: 既有 LINE 工作摘要、查詢、取消、立即執行與重試管理服務。
+    source: services/line_task_admin_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - LineTaskStateConflictError.__init__
+    - _as_int
+    - _transition_task
+    - cancel_line_task
+    - get_line_task
+    - get_line_task_summary
+    - list_line_tasks
+    - retry_line_task
+    - run_line_task_now
+  LineTaskService:
+    type: service
+    description: 既有 LINE 背景工作入列服務。
+    source: services/line_task_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 2
+    known_symbols:
+    - enqueue_line_task
+  MediaStorageService:
+    type: service
+    description: 既有 Rich Menu 圖像生成、上傳正規化、資產儲存與讀取服務。
+    source: services/media_storage_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies:
+    - DbService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 2
+    known_symbols:
+    - _encode_jpeg
+    - _font
+    - _safe_storage_path
+    - _save_asset
+    - delete_media_asset
+    - get_media_asset
+    - media_storage_root
+    - normalize_uploaded_rich_menu_image
+    - read_media_asset
+    - render_rich_menu_image
+    - store_generated_rich_menu_image
+    - store_uploaded_rich_menu_image
+  WebhookEventService:
+    type: service
+    description: 既有 webhook event 註冊與處理狀態標記服務。
+    source: services/webhook_event_service.py
+    domain: Services
+    subsystem: null
+    map_file: services\services_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: services_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - mark_event
+    - register_event

@@ -12,8 +12,10 @@ from api.schemas.base import BaseResponse
 from api.schemas.orders import (
     OrderFullUpdateRequest, 
     OrderStatusUpdateRequest, 
-    ScheduleCalculationRequest
+    ScheduleCalculationRequest,
 )
+
+
 
 router = APIRouter(prefix="/api/v1/orders", tags=["Orders 訂單管理"])
 
@@ -94,19 +96,9 @@ def update_order_status(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/calculate-schedule", response_model=BaseResponse[Dict[str, Any]])
-def calculate_schedule(req: ScheduleCalculationRequest):
-    """精算服務人員出勤日、扣除排休與國定假日順延完工日"""
-    try:
-        res = db_service.calculate_attendance_schedule(
-            actual_start_date=req.actual_start_date,
-            target_service_days=req.target_service_days,
-            service_mode=req.service_mode,
-            custom_holiday_rest_dates=req.custom_holiday_rest_dates
-        )
-        return BaseResponse(data=res, message="成功完成排班與順延完工日試算")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 
 @router.post(

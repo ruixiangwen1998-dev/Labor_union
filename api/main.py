@@ -17,26 +17,32 @@ from fastapi.staticfiles import StaticFiles
 
 from api.routes import (
     admin_auth,
+    assignment_schedule_rest_dates,
     client_payments,
     clients,
     contracts,
+    data_browser_admin,
     finance_alerts,
     finance_reports,
     holidays,
-    line_system_config,
     line_admin,
     line_rich_menus,
     line_reviews,
+    line_system_config,
     line_tasks,
+    match_records,
     matches,
     multi_caregiver_case_assignments,
     multi_caregiver_schedule,
     multi_caregiver_schedule_read,
+    order_schedule_calculation,
     orders,
     schedule,
     staff,
+    staff_monthly_schedule,
     staff_payments,
 )
+
 from api.schemas.base import BaseResponse
 from line.line_bot import router as line_router
 from line.worker import start_worker, stop_worker
@@ -90,13 +96,17 @@ app.include_router(line_reviews.router)
 
 # Existing administration API routers.
 app.include_router(orders.router)
+app.include_router(order_schedule_calculation.router)
+app.include_router(assignment_schedule_rest_dates.router)
 app.include_router(matches.router)
+app.include_router(match_records.router)
 app.include_router(schedule.router)
 app.include_router(multi_caregiver_case_assignments.router)
 app.include_router(multi_caregiver_schedule.router)
 app.include_router(multi_caregiver_schedule_read.router)
 app.include_router(clients.router)
 app.include_router(staff.router)
+app.include_router(staff_monthly_schedule.router)
 app.include_router(holidays.router)
 app.include_router(line_system_config.router)
 app.include_router(line_system_config.public_router)
@@ -105,6 +115,35 @@ app.include_router(staff_payments.router)
 app.include_router(contracts.router)
 app.include_router(finance_reports.router)
 app.include_router(finance_alerts.router)
+app.include_router(data_browser_admin.router)
+
+
+
+
+
+@app.middleware("http")
+async def audit_authenticated_mutations(request: Request, call_next):
+    """Persist authenticated management changes without storing request secrets."""
+    response = await call_next(request)
+    principal = getattr(request.state, "admin_principal", None)
+    is_preview = request.url.path.endswith("/preview")
+    if principal and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not is_preview:
+        try:
+            await asyncio.to_thread(
+                record_admin_audit,
+                principal=principal,
+                action=getattr(request.state, "audit_action", "api.mutation"),
+                request_path=request.url.path,
+                http_method=request.method,
+                result_status=response.status_code,
+                ip_address=request.client.host if request.client else None,
+                resource_type=getattr(request.state, "audit_resource_type", None),
+                resource_id=getattr(request.state, "audit_resource_id", None),
+                details=getattr(request.state, "audit_details", None),
+            )
+        except Exception as exc:
+            print(f"[Admin Audit] Failed to record request: {exc}")
+    return response
 
 
 @app.middleware("http")

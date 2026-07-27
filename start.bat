@@ -29,7 +29,12 @@ set "PY=%CD%\.venv\Scripts\python.exe"
 :: Make FastAPI, the terminal reviewer and Streamlit share one internal key.
 :: Prefer .env; when absent, create an ephemeral key for this development run.
 if defined INTERNAL_API_KEY goto internal_api_key_ready
-for /f "delims=" %%K in ('call "%PY%" -c "import os,secrets; from dotenv import load_dotenv; load_dotenv(); print(os.getenv('INTERNAL_API_KEY') or secrets.token_urlsafe(32))"') do set "INTERNAL_API_KEY=%%K"
+for /f "tokens=1,* delims==" %%A in ('findstr /R /B /I "^INTERNAL_API_KEY=" "%CD%\\.env"') do (
+    if /I "%%A"=="INTERNAL_API_KEY" set "INTERNAL_API_KEY=%%B"
+)
+if not defined INTERNAL_API_KEY (
+    for /f "delims=" %%K in ('call "%PY%" -c "import secrets; print(secrets.token_urlsafe(32))"') do set "INTERNAL_API_KEY=%%K"
+)
 
 :internal_api_key_ready
 if not defined INTERNAL_API_KEY (

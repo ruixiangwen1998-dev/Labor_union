@@ -2,6 +2,9 @@
 
 - Version: 39
 
+### Domain: Services
+- Description: Application services and persistence-facing business operations.
+
 ##### Module: DbService
 - Sub Map: services_layer
 - Type: service
@@ -925,7 +928,6 @@
 - Type: integration_test
 - State: `planned`
 - Source: tests/test_finance_import_staff_actual_transfer_integration.py
-- Dependencies: [FinanceImport, FinanceStatementNormalizationPipeline, FinanceImportStagingService, FinanceTransactionClassifier, StaffActualTransferService]
 - Description: 驗證 B5 服務人員實際轉帳由永豐或台新 Excel 經 normalization、append-only staging、分類、月結候選至 transfer/allocation 核銷的完整鏈路，並確認帳號歧義、跨月候選、舊制金額差異與 component 重複不會造成正式帳務副作用。
 - Complexity: medium
 - Input:
@@ -1213,6 +1215,375 @@
   - Build quarterly and annual workbooks with their approved column sets and optional lower subsidized-citizen section.
 - Verification:
   - command: {"argv": [".venv\\\\Scripts\\\\python.exe", "-m", "pytest", "tests\\\\test_subsidy_reconciliation_register.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: OrderScheduleCalculationService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/order_schedule_calculation_service.py
+- Description: 多指派與全訂單出勤排班精算、試算預覽與完工日順延協調服務。
+- Dependencies: [DbService]
+- Complexity: low
+- Input:
+  - start_date: 服務起始日期 (YYYY-MM-DD)。
+  - service_days: 預定服務天數 (int)。
+  - service_hours_per_day: 每日服務時數 (int)。
+  - custom_holiday_rest_dates: 自訂國定假日排休列表 (list[str])。
+  - custom_leave_dates: 自訂請假日期列表 (list[str])。
+  - custom_rest_weekdays: 自訂每週固定排休日列表 (list[int])。
+  - monthly_salary_base: 月薪基數天數 (int)。
+- Output:
+  - assigned_end_date: 精算後預計完工日 (YYYY-MM-DD)。
+  - total_rest_days: 總排休日數 (int)。
+  - actual_service_hours: 實際總服務時數 (int)。
+  - calculated_schedules: 每日出勤試算詳細清單。
+- Invariants:
+  - 本 Service 定義為純計算與跨指派協調服務，嚴禁直接執行 `DELETE FROM staff_schedule WHERE case_no = %s`。
+  - 必須合併 custom_holiday_rest_dates 與 custom_leave_dates 為聯集，不得使用 OR 條件二選一。
+  - 必須完整轉傳與處理 custom_rest_weekdays 與 monthly_salary_base。
+  - 單一 assignment 修改排休時不得直接使用本 Service 覆寫全局 orders.custom_rest_dates 或 orders.actual_end_date。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_order_schedule_calculation_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+
+- Observability: not_required
+
+
+##### Module: AssignmentScheduleRestDateService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::save_assignment_rest_dates
+- Description: 以 assignment_id 為唯一權屬進行月嫂排休與動態順延保存服務。
+- Dependencies: [DbService, AssignmentScheduleRestDateValidationHelpers, AssignmentScheduleRestDatePersistenceHelpers]
+- Complexity: low
+- Input:
+  - assignment_id: 服務指派唯一識別碼。
+  - rest_dates: 排休日期列表 (YYYY-MM-DD)。
+  - operator: 操作者或申請來源。
+- Output:
+  - assignment_id: 服務指派識別碼。
+  - case_no: 所屬案件編號。
+  - staff_id: 服務月嫂 ID。
+  - previous_assigned_end_date: 變更前預計完工日。
+  - new_assigned_end_date: 計算後新完工日。
+  - canonical_rest_dates: 去重且穩定排序之標準排休日期列表。
+  - deleted_day_count: 刪除之舊排班天數。
+  - inserted_day_count: 新增之排班天數。
+  - actual_hours: 計算後實際服務時數。
+  - status: 執行狀態 (success, not_found, validation_error, conflict, requires_review)。
+  - review_reasons: 需人工審查或衝突之原因列表。
+  - audit_id: 異動稽核紀錄 ID。
+- Idempotency:
+  - 相同 assignment_id 與 canonical_rest_dates 重複執行，不得重複排班、重複延長或產生額外差異。
+- Invariants:
+  - assignment 查詢必須嚴格綁定 WHERE case_staff_assignments.id = assignment_id；找不到時回傳 not_found。
+  - 嚴禁將 assignment_id 當作 staff_id 使用，嚴禁依據 case_no、姓名、日期或最近一筆指派推測 assignment。
+  - rest_dates 必須嚴格驗證 YYYY-MM-DD 格式、去重並穩定排序；任一非法日期必須整筆失敗，不得靜默忽略。
+  - 已取消之 assignment 不得進行任何排修或排班修改。
+  - 若已存在付款鎖、月結鎖、人工 actual_hours 覆寫鎖或其他正式鎖定，必須回傳 conflict/requires_review。
+  - 不得使用整張訂單 service_days 為單一 assignment 產生完整排班，必須以 assignment 自身的開工日、完工日、allocated/planned hours 或正式 ownership 計算；若現有 schema 無法唯一決定服務天數，必須回傳 requires_allocation/requires_review，不得任意猜測。
+  - 所有 staff_schedule 異動必須嚴格限定 WHERE assignment_id = %s；嚴禁執行 DELETE FROM staff_schedule WHERE case_no = %s。
+  - 嚴禁修改其他 assignment 的排班；不得自動延伸或移動下一位月嫂的 assignment；若順延後與下一指派重疊，必須回傳 409 conflict/requires_review。
+  - 所有讀鎖、刪除、插入、assignment 更新及 audit 寫入必須在同一資料庫 Transaction 內執行，任一步驟失敗全部 rollback。
+  - 單一 assignment 不得直接覆寫 orders.custom_rest_dates 或 orders.actual_end_date。
+  - 本 Service 不得拋出 FastAPI HTTPException，必須回傳領域結果或 Domain Error，由 Router 負責 HTTP 狀態碼映射。
+- Algorithm:
+  - 1. validate: 驗證輸入參數與 rest_dates 之 YYYY-MM-DD 格式。
+  - 2. canonicalize: 對 rest_dates 進行去重與排序取得 canonical_rest_dates。
+  - 3. lock/read assignment: 在 Transaction 內依 assignment_id 讀取並鎖定目標指派。
+  - 4. check cancellation/payment/settlement/hour locks: 檢查指派是否取消或存在付款/月結/人工時數鎖。
+  - 5. determine assignment-owned target: 依指派自身額度與 ownership 計算目標天數與完工日。
+  - 6. check overlap: 檢查順延完工日是否與同案件其他指派重疊。
+  - 7. calculate: 重新計算單日排班與休假。
+  - 8. transactional replace: 在同一 Transaction 內更新 staff_schedule。
+  - 9. update assignment-owned summary: 更新指派專屬完工日與狀態。
+  - 10. audit: 寫入異動稽核日誌。
+  - 11. return result: 回傳處理結果結構。
+- Non Goals:
+  - 不由單一 assignment 節點計算或寫入訂單整體完工日與全局 custom_rest_dates (改由獨立跨指派協調節點處理)。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_assignment_rest_date_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+
+- Observability: not_required
+
+##### Module: AssignmentScheduleRestDateValidationHelpers
+- Sub Map: services_layer
+- Type: function
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::_as_positive_int,_as_date,_as_rest_date_string,_as_positive_decimal,_normalise_rest_dates,_snapshot_failure
+- Description: 排休服務專用的輸入正規化與穩定領域失敗結果 helper。
+- Complexity: low
+- Input:
+  - assignment_id: 待驗證之 assignment 識別值。
+  - rest_dates: 待正規化的排休日期集合。
+- Output:
+  - validated_values: 嚴格正整數、正 Decimal 與 ISO 日期值。
+  - canonical_rest_dates: 去重並排序的 YYYY-MM-DD 字串陣列。
+  - failure_result: 穩定的領域失敗結果。
+- Invariants:
+  - assignment_id 必須為正整數，不得接受 bool、零、負數或 staff_id fallback。
+  - rest_dates 必須為陣列；任一元素不是嚴格 YYYY-MM-DD 字串時整批失敗。
+  - 日期字串不得 strip、不得接受非零填充格式、date 或 datetime 物件。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_assignment_rest_date_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleRestDatePersistenceHelpers
+- Sub Map: services_layer
+- Type: function
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::_load_case_assignments,_assert_assignment_is_unlocked
+- Description: 排休 transaction 內的同案 assignment 讀取與正式鎖定條件驗證 helper。
+- Dependencies: [DbService]
+- Complexity: low
+- Input:
+  - cursor: 現有 transaction cursor。
+  - case_no: 目標案件編號。
+  - assignment_id: 目標 assignment 唯一識別。
+- Output:
+  - case_assignments: 同案件正式 assignment 列。
+  - lock_validation: 可修改或 conflict。
+- Invariants:
+  - 必須重用呼叫端既有 cursor，不得自行建立 connection 或 commit。
+  - assignment ownership 僅能使用 assignment_id，不得猜測 staff_id 或最近一筆 assignment。
+  - 已取消、付款鎖、月結鎖或人工工時鎖必須 fail-closed。
+- Algorithm:
+  - 使用呼叫端 transaction cursor 依 case_no 穩定讀取同案 assignments，不自行建立 connection。
+  - 依 assignment_id 讀取正式鎖定狀態，依序檢查取消、付款、月結與人工工時鎖。
+  - 任一鎖定條件成立即拋出 conflict；helper 不得 commit、rollback 或修改排班。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_assignment_rest_date_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: StaffMonthlyCalendarScheduleService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/staff_monthly_calendar_schedule_service.py
+- Description: 由 case_staff_assignments 與 staff_schedule.assignment_id 查詢月嫂指定年月檔期排班視圖服務。
+- Dependencies: [DbService]
+- Complexity: low
+- Input:
+  - staff_id: 月嫂 ID (int)。
+  - year: 年份 (int)。
+  - month: 月份 (int, 1-12)。
+- Output:
+  - staff_id: 月嫂 ID。
+  - year: 年份。
+  - month: 月份。
+  - days: 每日檔期排班物件陣列 (含 work_date, status, assignment_id, case_no, staff_id, client_name, is_work_day, is_double_pay, notes)。
+  - schedule_map: 舊版 UI 相容結構 (可選)。
+- Invariants:
+  - 嚴禁使用 legacy `get_staff_monthly_schedule()` 與 `orders.staff_id` 決定月嫂檔期與權屬；必須 100% 由 `case_staff_assignments` 與 `staff_schedule.assignment_id` 產生月曆。
+  - 嚴禁使用 `case_no` 填入 `assignment_id` 欄位。
+  - 同日多指派 (assignment) 必須回傳多筆包含各自 assignment_id 之 rows 紀錄，嚴禁使用日期 Key 的 Dictionary 靜默覆蓋任何一筆指派。
+  - 歷史遺留 `assignment_id IS NULL` 之排班資料必須明確排除或獨立標記為 unassigned，不得任意猜測或歸併 ownership。
+  - days 陣列中每筆物件必須完整包含：work_date, status, assignment_id, case_no, staff_id, client_name, is_work_day, is_double_pay, notes。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_staff_monthly_calendar_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: MatchRecordIdempotentService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/match_record_idempotent_service.py
+- Description: 原子化且防範高併發 Duplicate Key 之媒合紀錄建立與查詢服務。
+- Dependencies: [DbService]
+- Complexity: low
+- Input:
+  - case_no: 案件編號 (str)。
+  - staff_id: 服務人員 ID (int)。
+  - response_type: 媒合意向或回覆狀態 (str)。
+  - notes: 備註說明 (str, 可選)。
+- Output:
+  - match_id: 媒合紀錄 ID (int)。
+  - case_no: 案件編號。
+  - staff_id: 服務人員 ID。
+  - status: 處理狀態 (success, existing)。
+  - is_duplicate: 是否為重複點擊/更新紀錄 (bool)。
+- Invariants:
+  - 唯一邏輯鍵 (UNIQUE KEY) 必須綁定 `(case_no, staff_id)` 組合。
+  - 必須使用 `INSERT INTO matching_records ... ON DUPLICATE KEY UPDATE` 或完全等冪之 Transaction 查詢處置，防範使用者快速二次點擊引發之 IntegrityError，嚴禁拋出 HTTP 500。
+  - 嚴禁於本 Service 內覆寫或將 `orders.staff_id` 寫死。
+  - 不得產生無正式 ownership 綁定之無效 assignment 資料。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_match_record_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: DataBrowserAdminSchemaService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/data_browser_admin_schema_service.py
+- Description: 提供資料庫各表動態主鍵、可編輯白名單與唯讀權限中繼資料服務。
+- Dependencies: [DbService]
+- Complexity: low
+- Input:
+  - table_name: 資料表名稱 (str)。
+  - row_id: 資料列識別碼 (str，支援整數與字串主鍵 case_no)。
+  - updates: 待更新欄位字典 (Dict[str, Any])。
+  - operator_id: 經正式 AdminPrincipal 驗證的 username。
+  - operator_role: 經正式 AdminPrincipal 驗證的 role。
+- Output:
+  - schema: 資料表之中繼權限字典 (含 primary_key, editable_columns, read_only, valid_options, rows, columns)。
+  - patch_result: 成功標記與影響列數。
+- Invariants:
+  - 必須設定可讀資料表白名單 (ALLOWED_TABLES)、可編輯資料表白名單與可編輯欄位白名單 (EDITABLE_COLUMNS)。
+  - primary_key 必須依據 TABLE_PRIMARY_KEYS 動態回傳 (例如 orders 轉為字串主鍵 case_no)，支援字串主鍵查詢與微調。
+  - 必須回傳 read_only 與 valid_options 中繼資料作為單一事實來源 (SSOT)。
+  - 對資料表、主鍵與 updates 之檢查必須採取 fail-closed 原則；若 updates payload 同時包含合法與非法欄位，必須整筆失敗並拋出 invalid_input，嚴禁自動過濾後僅套用部分欄位。
+  - 資料庫更新影響列數 (affected rowcount) 為 0 時，視為更新失敗 (not_found)，不得回傳成功亦不得寫入成功 audit 紀錄。
+  - Audit actor 與 role 必須由 Router 傳入的正式 AdminPrincipal 欄位提供，不得由 username 推測 role 或固定寫成 admin。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_data_browser_admin_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+
+- Observability: not_required
+
+
+##### Module: DataBrowserAdminAuditLogService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/data_browser_admin_audit_log_service.py
+- Description: 記錄 Data Browser 單列微調異動紀錄至 audit_logs 服務。
+- Dependencies: [DbService]
+- Complexity: low
+- Input:
+  - action: 異動動作名稱 (如 DATA_BROWSER_PATCH)。
+  - table_name: 目標資料表。
+  - primary_key_value: 目標資料列主鍵值。
+  - before_snapshot_hash: 異動前資料快照 Hash。
+  - after_snapshot_hash: 異動後資料快照 Hash。
+  - changed_fields: 變更欄位新舊值字典。
+  - authenticated_actor: 經認證之操作者身分與 Role。
+  - request_id: 請求追蹤 correlation id。
+- Output:
+  - audit_id: 成功寫入之稽核紀錄 ID。
+- Invariants:
+  - 資料修改與 audit 寫入必須完全共用同一資料庫 Connection / Transaction (update -> audit insert -> commit)；若 audit 寫入失敗，資料修改必須全數 rollback。
+  - 嚴禁在 HTTP request 或 Service 執行期間動態發起 `CREATE TABLE IF NOT EXISTS audit_logs`；`audit_logs` 表結構必須由正式 DB Migration 預先建立。
+  - Audit 必須至少保存：authenticated_actor, action, table_name, primary_key_value, before_snapshot_hash, after_snapshot_hash, changed_fields, occurred_at, request_id。
+  - 嚴禁記錄不必要的密碼、Token 或完整敏感個人資料 (PII)。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_data_browser_admin_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: AdminAuthService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/admin_auth_service.py
+- Description: 資料庫管理員帳號、session token 驗證、角色階級與可信 AdminPrincipal 的正式認證服務。
+- Dependencies: [DbService]
+- Complexity: medium
+- Input:
+  - credentials_or_session_token: 管理員登入憑證或 Bearer session token。
+  - minimum_role: 需要比對時的最低管理員角色。
+- Output:
+  - admin_principal: 經資料庫驗證且包含 id、username、display_name、role 的 AdminPrincipal。
+- Algorithm:
+  - 登入時正規化 username、驗證 scrypt 密碼 Hash，並只為啟用帳號建立具到期時間的隨機 session token。
+  - 僅保存 session token 的 SHA-256 Hash；查詢 session 時同時檢查未撤銷、未過期及帳號仍啟用。
+  - 將資料庫身分轉成不可變 AdminPrincipal，角色比較只使用 ROLE_LEVELS。
+  - 撤銷、續期或 audit 寫入各自使用明確 transaction；任何資料庫錯誤不得偽造成功結果。
+- Invariants:
+  - Session token 只能以安全 Hash 儲存與查詢，不得將明文 token 寫入資料庫或 log。
+  - 角色只能使用既定 ROLE_LEVELS，授權比較不得信任 UI 傳入的 role 或 actor 字串。
+  - 停用、撤銷或過期 session 必須 fail-closed，不得產生 principal。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_admin_auth_security.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: JsonConfigService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/json_config_service.py
+- Description: 既有 JSON 設定檔的路徑、讀取、revision、寫入與項目查找 helper 服務。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineLiffConfigService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/line_liff_config_service.py
+- Description: 既有 LIFF 設定快照、歷史版本列舉與指定 revision 讀取服務。
+- Dependencies: [JsonConfigService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineLiffIdentityService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/line_liff_identity_service.py
+- Description: 既有 LIFF token 必填判斷與 LINE 使用者身分解析服務。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineReviewService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/line_review_service.py
+- Description: 既有 LINE 審核摘要、查詢與核准／駁回決策服務。
+- Dependencies: [DbService, LineRichMenuService, LineTaskService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineRichMenuService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/line_rich_menu_service.py
+- Description: 既有 LINE Rich Menu 發布工作、查詢、重試與排程處理服務。
+- Dependencies: [DbService, JsonConfigService, LineTaskService, MediaStorageService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineTaskAdminService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/line_task_admin_service.py
+- Description: 既有 LINE 工作摘要、查詢、取消、立即執行與重試管理服務。
+- Dependencies: [DbService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineTaskService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/line_task_service.py
+- Description: 既有 LINE 背景工作入列服務。
+- Complexity: low
+- Observability: not_required
+
+##### Module: MediaStorageService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/media_storage_service.py
+- Description: 既有 Rich Menu 圖像生成、上傳正規化、資產儲存與讀取服務。
+- Dependencies: [DbService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: WebhookEventService
+- Sub Map: services_layer
+- Type: service
+- State: `planned`
+- Source: services/webhook_event_service.py
+- Description: 既有 webhook event 註冊與處理狀態標記服務。
+- Complexity: low
 - Observability: not_required
 
 <!-- SERVICES_MODULES_END -->

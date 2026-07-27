@@ -14,6 +14,11 @@ from services import subsidy_reconciliation_register
 
 
 router = APIRouter(prefix="/api/v1/finance-reports", tags=["Finance Reports"])
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+class XlsxStreamingResponse(StreamingResponse):
+    media_type = XLSX_MEDIA_TYPE
 
 
 def _payable_preview(target_month: str) -> dict[str, Any]:
@@ -52,10 +57,9 @@ def _payable_summary_preview(target_month: str) -> dict[str, Any]:
     }
 
 
-def _xlsx_response(workbook_bytes: bytes, filename: str) -> StreamingResponse:
-    return StreamingResponse(
+def _xlsx_response(workbook_bytes: bytes, filename: str) -> XlsxStreamingResponse:
+    return XlsxStreamingResponse(
         iter([workbook_bytes]),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -88,7 +92,7 @@ def preview_accounts_payable_summary(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/accounts-payable/export")
+@router.get("/accounts-payable/export", response_class=XlsxStreamingResponse)
 def export_accounts_payable(
     target_month: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
 ):
@@ -118,7 +122,7 @@ def preview_quarterly_reconciliation(
     )
 
 
-@router.get("/subsidy-reconciliation/quarterly/export")
+@router.get("/subsidy-reconciliation/quarterly/export", response_class=XlsxStreamingResponse)
 def export_quarterly_reconciliation(
     application_year: int = Query(..., ge=1912),
     quarter: int = Query(..., ge=1, le=4),
@@ -148,7 +152,7 @@ def preview_annual_reconciliation(
     )
 
 
-@router.get("/subsidy-reconciliation/annual/export")
+@router.get("/subsidy-reconciliation/annual/export", response_class=XlsxStreamingResponse)
 def export_annual_reconciliation(
     application_year: int = Query(..., ge=1912),
 ):

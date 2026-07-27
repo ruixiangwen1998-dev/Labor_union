@@ -26,9 +26,10 @@ def _function_source(name: str) -> str:
 def test_show_only_loads_initial_data_then_delegates_to_order_ui_shell():
     show = _function_source("show")
 
-    assert "db_service.get_order_details()" in show
-    assert "db_service.get_table_data('clients')" in show
-    assert "db_service.get_table_data('staff')" in show
+    assert "/api/v1/orders" in show
+    assert "/api/v1/staff" in show
+    assert "db_service" not in show
+    assert "clients = []" in show
     assert "_render_order_page_shell(orders_data, clients, staff_list)" in show
     assert "st.tabs(" not in show
     assert "get_table_data('payments')" not in show
@@ -41,6 +42,7 @@ def test_show_only_loads_initial_data_then_delegates_to_order_ui_shell():
         "_render_tab5_subsidy_reconciliation(",
     ):
         assert renderer not in show
+
 
 
 def test_order_ui_shell_owns_fixed_five_tab_layout_and_dispatch():

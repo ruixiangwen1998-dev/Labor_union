@@ -1,6 +1,6 @@
 [project]
 name = "union"
-version = "0.2.0"
+version = "0.2.1"
 description = "LINE-enabled administration, scheduling, and finance reconciliation for the Hsinchu postpartum caregiver union"
 readme = "README.md"
 requires-python = ">=3.11"

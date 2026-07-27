@@ -13,3 +13,6 @@ class MatchReplyRequest(BaseModel):
 
 class MatchAssignRequest(BaseModel):
     staff_id: int = Field(..., description="擬定案指派之月嫂 staff_id")
+
+class MatchCreateRequest(BaseModel):
+    staff_id: int = Field(..., description="月嫂 staff_id")

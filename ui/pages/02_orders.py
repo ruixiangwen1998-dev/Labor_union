@@ -5,8 +5,9 @@
 ================================================================================
 """
 
+import os
+import requests
 import streamlit as st
-from services import db_service
 
 from ui.pages.order.tab1_overview import _render_tab1_overview
 from ui.pages.order.tab2_assign import _render_tab2_assign
@@ -44,14 +45,32 @@ def _render_order_page_shell(orders_data, clients, staff_list):
 
 
 def show():
-    """Load Page 2's initial data, then delegate all tab rendering to OrderUI."""
+    """Load Page 2's initial data from FastAPI endpoints, then delegate all tab rendering to OrderUI."""
     st.title("📦 訂單與帳務管理系統")
     st.write("本系統串接了 `v_order_details` 整合計算檢視表，提供訂單生命週期、指派配對以及帳務實收狀態的管理。")
 
+    base_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+
     try:
-        orders_data = db_service.get_order_details()
-        clients = db_service.get_table_data('clients')
-        staff_list = db_service.get_table_data('staff')
+        resp_orders = requests.get(f"{base_url}/api/v1/orders", timeout=10)
+        resp_orders.raise_for_status()
+        orders_payload = resp_orders.json()
+        if not isinstance(orders_payload, dict) or not orders_payload.get("success"):
+            raise ValueError("取得訂單清單回應狀態不符")
+        orders_data = orders_payload.get("data")
+        if not isinstance(orders_data, list):
+            raise ValueError("訂單資料格式非陣列")
+
+        resp_staff = requests.get(f"{base_url}/api/v1/staff", timeout=10)
+        resp_staff.raise_for_status()
+        staff_payload = resp_staff.json()
+        if not isinstance(staff_payload, dict) or not staff_payload.get("success"):
+            raise ValueError("取得月嫂清單回應狀態不符")
+        staff_list = staff_payload.get("data")
+        if not isinstance(staff_list, list):
+            raise ValueError("月嫂資料格式非陣列")
+
+        clients = []
     except Exception as e:
         st.error(f"初始化載入資料失敗: {e}")
         return

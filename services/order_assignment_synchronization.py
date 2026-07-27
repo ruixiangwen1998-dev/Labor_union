@@ -710,11 +710,12 @@ def apply_order_assignment_sync(
 
             cursor.execute(
                 """UPDATE orders
-                      SET service_days = %s, service_hours_per_day = %s,
-                          floor_fee = %s, deposit_date = %s,
-                          start_date = %s, end_date = %s,
-                          actual_start_date = %s, actual_end_date = %s
-                    WHERE case_no = %s""",
+                       SET service_days = %s, service_hours_per_day = %s,
+                           floor_fee = %s, deposit_date = %s,
+                           start_date = %s, end_date = %s,
+                           actual_start_date = %s, actual_end_date = %s,
+                           status = '訂單成立'
+                     WHERE case_no = %s""",
                 (
                     change["service_days"], change["service_hours_per_day"],
                     change["floor_fee"], change["deposit_date"],

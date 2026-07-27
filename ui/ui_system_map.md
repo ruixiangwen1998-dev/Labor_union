@@ -1,11 +1,15 @@
 # UI System Map
 
+### Domain: UI
+- Description: Streamlit user interface, page composition, and HTTP client contracts.
+- Allowed Dependencies: [API]
+
 ##### Module: AppShellUI
 - Sub Map: ui_layer
 - Type: ui_shell
 - Source: ui/app.py
 - Description: Streamlit 側邊欄導覽殼層，動態載入 ui/pages/ 頁面。
-- Dependencies: [DataBrowserUI, OrderUI, CalendarUI, FormManagementUI]
+- Dependencies: [DataBrowserUI, OrderUI, CalendarUI, FormManagementUI, FinanceAlertCenterUI, LineManagementUI]
 - Observability: not_required
 
 ##### Module: DataBrowserUI
@@ -14,13 +18,36 @@
 - State: `validated`
 - Source: ui/pages/01_data_browser.py
 - Description: 原始資料庫表格瀏覽頁面。只提供 DbService 仍支援的資料表檢視；legacy payments 選項與相關唯讀／編輯設定必須完全移除。
-- Dependencies: [DbService]
+- Dependencies: [DataBrowserAdminRouter, HolidayRouter, UIAdminApiContext]
 - Invariants:
   - INV-UI-BROWSER-01: 原始資料表格欄位必須支援透過對照表轉換為中文名稱 (含英文原鍵名或純中文)，未記錄欄位自動安全回退原鍵名。
   - orders 的資料瀏覽不得顯示或編輯 clients.identity_status；資格資訊只顯示 clients.identity_status，且該欄位在 DataBrowserUI 必須唯讀。
   - table_options、EDITABLE_COLUMNS 與 READ_ONLY_TABLES 均不得包含精確 legacy 表名 payments；必須保留 client_payments、client_payment_transactions、staff_payments 與 staff_payment_transactions。
+  - 所有 Data Browser metadata、PATCH 與 holidays 請求必須使用 UIAdminApiContext 產生的正式 headers；不得送出 X-Auth-Context。
+  - 正式模式缺少 internal service key 或管理員 session 時必須停止渲染資料操作且不得發出 HTTP 請求。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_data_browser_identity_status_ui.py"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_data_browser_identity_status_ui.py", "tests\\test_data_browser_runtime_acceptance_app_test.py"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: UIAdminApiContext
+- Sub Map: ui_layer
+- Type: ui_helper
+- State: `planned`
+- Source: ui/pages/shared.py
+- Description: Streamlit 管理員頁共用 runtime API base URL、internal service key 與 Bearer session header 組裝。
+- Dependencies: [AdminAuthorizationDependency]
+- Input:
+  - environment: API_BASE_URL、INTERNAL_API_KEY、APP_ENV、ENABLE_ADMIN_AUTH。
+  - session_state: line_admin_access_token。
+- Output:
+  - api_base_url: runtime 解析且去除尾端斜線的 API base URL。
+  - admin_headers: X-Internal-API-Key 與正式模式 Authorization Bearer header。
+- Invariants:
+  - INTERNAL_API_KEY 永遠必須存在；不得提供 admin_role、operator、user_role 或 ADMIN_AUTH_CONTEXT fallback。
+  - 正式模式必須從 line_admin_access_token 取得非空 token；不得接受 UI 文字欄位指定 principal 或 role。
+  - 只有與 backend 相同的明確 development bypass 條件下可省略 Authorization，且仍必須送 internal service key。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_data_browser_runtime_acceptance_app_test.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
 
 ##### Module: OrderUI
@@ -87,15 +114,19 @@
 - Sub Map: ui_layer
 - Type: ui_component
 - State: `validated`
-- Source: ui/pages/order/tab2_assign.py::_render_tab2_assign
-- Description: Tab 2 渲染函數 (案件與配對中心)。僅列出「洽談中」待配對案件，提供單筆案件控制面板、4 大智慧粗篩可選條件 (含香山區等 city/address 比對與 7 天預留備用期) 與 4 步智慧配對流程。
+- Source: ui/pages/order/tab2_assign.py::_render_tab2_assign,_api_request,_build_sync_request,_iso_date_text,_parse_iso_date
+- Description: Tab 2 渲染函數 (案件與配對中心)。僅列出「洽談中」待配對案件，提供單筆案件控制面板、4 大智慧粗篩可選條件與 4 步智慧配對流程；排休更新必須綁定 assignment_id 專屬 API。
+- Dependencies: [AssignmentScheduleRestDateRouter, MatchRecordRouter]
 - Invariants:
   - INV-UI-ASSIGN-01: 媒合紀錄清單僅能顯示至少有一項發送紀錄 (sent_info_1_at/sent_info_2_at) 或意願已變更的有效紀錄。
   - INV-UI-ASSIGN-02: 選取月嫂檢視時嚴禁 speculative 預先建立 DB 紀錄，必須在點擊發送/變更動作時按需 (On-Demand) 建立。
   - 案件選單與摘要的身分資格只能顯示 clients.identity_status；不得讀取或顯示 clients.identity_status。
+  - 排休與動態順延保存必須透過 API 呼叫 `PUT /api/v1/assignment-schedules/{assignment_id}/rest-dates`，嚴禁呼叫或衍生已停用/危險之 `PUT /api/v1/orders/{case_no}/rest-dates` 端點。
+  - Page2TabNavigation (Tab導覽選單) 必須單獨保留、單獨維護與審查，不得將本 UI 與其他 UI 混合變更。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_order_assign_identity_status_ui.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-order-assign-identity"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_order_assign_identity_status_ui.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-order-assign-identity"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
+
 
 ##### Module: OrderUI_Tab3_Finance
 - Sub Map: ui_layer
@@ -113,28 +144,32 @@
 - Sub Map: ui_layer
 - Type: ui_page
 - State: `validated`
-- Source: ui/pages/03_calendar.py::show,safe_float,safe_int,safe_date,_multi_caregiver_request,_multi_caregiver_error,_render_multi_caregiver_panel
-- Dependencies: [MultiCaregiverCaseAssignmentListRouter, MultiCaregiverScheduleReadRouter, MultiCaregiverScheduleRouter]
-- Description: 服務人員行事曆與檔期調控獨立頁面。除既有月曆模式外，提供多月嫂案件→正式服務指派選擇、指派專屬日排班呈現與單日調整。
+- Source: ui/pages/03_calendar.py::show,safe_float,safe_int,safe_date,_multi_caregiver_request,_multi_caregiver_error,_render_multi_caregiver_panel,_coerce_iso_date_strict,_coerce_staff_id,_extract_case_assignments_for_staff,_parse_stored_rest_dates
+- Description: 服務人員行事曆與檔期調控獨立頁面。由 StaffMonthlyCalendarScheduleRouter 載入月度檔期視圖，提供多月嫂案件→正式服務指派選擇、指派專屬日排班呈現與單日調整。
+- Dependencies: [StaffMonthlyCalendarScheduleRouter, HolidayRouter, UIAdminApiContext, MultiCaregiverCaseAssignmentListRouter, MultiCaregiverScheduleReadRouter, MultiCaregiverScheduleRouter]
 - Invariants:
   - INV-CAL-01: 必須在 HTML 月曆表格繪製前優先執行精算引擎，確保休假天數即時 100% 連動呈現。
   - INV-CAL-02 (兩階段選單隔離): 「訂單匹配」模式僅於行事曆展示黃底預排與 7 天預留備用期，不顯示單日排假與出勤精算面板；「出勤天數精算」模式僅適用於確定實際開工日 (actual_start_date) 案件，解鎖紅底工作日與綠底休假排假控制。
   - INV-CAL-03 (四色月曆視覺公理): ⚪白底=無排班或超出完工日解鎖區間; 🟡黃底=預排案件與完工日後 7 天預留備用期; 🔴紅底=確定服務工作日; 🟢綠底=自訂請假與國定假日放假。
   - INV-CAL-04 (綠底休假與動態順延): 每增加 1 天綠底 🟢 休假，後續紅底 🔴 工作日與服務結束日 (actual_end_date) 自動向後動態順延 1 天，確保實際服務天數 100% 足額達 N 天。
   - INV-CAL-05 (國定假日單日獨立決策): 支援連假期間針對每一個獨立國定假日進行單日個體勾選；選擇放假者在月曆標示為綠底 🟢 且完工日順延 1 天，選擇上班者計為紅底 🔴 正常工作日 (預設雙倍薪資)。
+  - 月嫂月度檔期視圖必須經由 REST API (`StaffMonthlyCalendarScheduleRouter`: GET /api/v1/staff/{staff_id}/monthly-schedule) 讀取，嚴禁在 UI 層直接執行 Python SQL 語法進行查詢。
+  - 國定假日必須經由 `HolidayRouter` 的 GET `/api/v1/holidays` 讀取，並使用 `UIAdminApiContext` 產生的正式 headers；缺少 internal service key 或正式模式管理員 session 時必須停止該請求，不得裸送或偽造權限。
   - 多月嫂模式必須先選 case_no、再從該案件 API 回傳的正式指派中選 assignment_id；不得由 orders.staff_id、日期或姓名推測指派。
   - 多月嫂模式只透過 MultiCaregiverCaseAssignmentListRouter、MultiCaregiverScheduleReadRouter 與 MultiCaregiverScheduleRouter 讀寫；不得呼叫 legacy 排班 helper。
   - 不提供同日分時段、planned_hours 或 actual_hours 手動輸入；單日請假不自動延伸、覆寫或移動下一位月嫂的服務區段。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "ui\\pages\\03_calendar.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_calendar_ui_explicit_errors.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
+
 
 ##### Module: EditOrderUI
 - Sub Map: ui_layer
 - Type: ui_component
 - State: `planned`
 - Source: ui/pages/order/editor.py::render_editor
-- Dependencies: [OrderRouter, MultiCaregiverCaseAssignmentListRouter, StaffRouter]
+- Dependencies: [OrderRouter, OrderScheduleCalculationRouter, MultiCaregiverCaseAssignmentListRouter, StaffRouter]
 - Description: 單筆訂單 38 欄位動態試算與資料維護頁面。採用 st.columns 與帶邊框 Container 打造實體訂單單據視覺，具備 Formula Lock Guardrail，以及訂單變更→完整月嫂指派→帳務／排班預覽→明確套用的一致性工作流。
 - Complexity: medium
 - Input:
@@ -146,7 +181,7 @@
   - synchronization_apply_result: 成功套用後的正式指派與排班摘要，並觸發訂單頁重新載入。
 - Algorithm:
   - 讀取目前案件的 clients.identity_status 並以唯讀欄位顯示，要求使用者提交完整 assignment_plan；不得以 orders.staff_id、媒合紀錄或第一筆候選推測指派。
-  - 對 OrderRouter preview 送出完整訂單目標值與指派計畫，清楚呈現時數差額、鎖定原因及 required_schedule_removals。
+  - 對 OrderScheduleCalculationRouter 送出排班與順延試算請求，對 OrderRouter preview 送出完整訂單目標值與指派計畫，清楚呈現時數差額、鎖定原因及 required_schedule_removals。
   - 「確定儲存」先要求有效且未過期的 preview；僅當 preview 可套用時，要求使用者逐筆明確確認全部 required_schedule_removals 與非空 applied_by，再呼叫 OrderRouter apply；HTTP 409／422 必須顯示原始原因而非呈現成功。
   - apply 成功後清除本頁同步草稿並 rerun 重新讀取訂單；CalendarUI 下次顯示時由正式指派與日排班 API 重新讀取，不保留舊排班快取。
 - Invariants:
@@ -155,20 +190,22 @@
   - INV-EDIT-04: 強制解鎖自動試算欄位時，必須顯性跳出警告告知公式連動失效風險。
   - 服務人員付款日與補助退款日必須依服務結束日及身分資格推導，並在「五、實收對帳、狀態與備註登錄區」以唯讀鎖定欄位顯示；不得寫入訂單或帳務資料。
   - INV-EDIT-05: 任何含 service_days、service_hours_per_day、start_date、end_date、actual_start_date 或 actual_end_date 的訂單變更，必須只經 OrderRouter 的 preview／apply 同步流程；不得先呼叫 db_service.update_order_full_details 或 `/full-details`。
+  - 必須呼叫 `OrderScheduleCalculationRouter` (POST /api/v1/orders/schedule-calculation) 進行出勤排班與完工日順延試算。
   - 補助資格只能以 clients.identity_status 唯讀呈現；UI 不得提供修改控制項、不得傳送 identity_status 或 clients.identity_status，也不得讀取 clients.identity_status。
   - 訂金應收日期可為空值，空值不得以今天或第一期應收日自動補值；送出同步請求時須保留 null。
   - 多月嫂正式指派只能由 case_no 的正式指派 API 建立或選取；不得由 orders.staff_id、媒合紀錄、姓名、日期或列表第一筆推測。
   - apply 前必須明確呈現並確認 required_schedule_removals；遇帳務鎖定、人工時數覆寫或時數差額時，不得繞過、靜默降級或顯示成功。
   - 帳務仍由新帳務介面獨立處理；本頁不得建立、調整或取消 client／staff payments、月結或轉帳。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_edit_order_synchronization_ui.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-edit-order-synchronization-ui"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_edit_order_synchronization_ui.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-edit-order-synchronization-ui"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
+
 
 ##### Module: EditOrderDerivedDateHelpers
 - Sub Map: ui_layer
 - Type: function
 - State: `planned`
-- Source: ui/pages/order/editor.py::_parse_date,_month_index,_derive_service_end_date,_derive_staff_payment_date,_derive_subsidy_refund_date
+- Source: ui/pages/order/editor.py::_parse_date,_month_index,_derive_service_end_date,_derive_staff_payment_date,_derive_subsidy_refund_date,_generate_virtual_account
 - Description: 訂單編輯頁顯示用的服務結束日、服務人員付款日與補助退款日推導 helper；結果僅供唯讀欄位呈現。
 - Input:
   - order: 含實際服務日期、服務天數與唯讀身分資格的訂單資料。
@@ -279,16 +316,23 @@
 - Type: ui_page
 - State: `planned`
 - Source: ui/pages/02_orders.py::show
-- Dependencies: [OrderUI]
-- Description: Page 2 的入口；只載入 orders、clients、staff 並處理初始化錯誤，將資料交給 OrderUI 殼層渲染。
+- Dependencies: [OrderUI, OrderRouter, StaffRouter]
+- Description: Page 2 的入口；只經既有 FastAPI 載入 orders 與 staff，使用空 clients 清單作為既有 OrderUI 介面的暫時相容橋接，並處理初始化錯誤後將資料交給 OrderUI 殼層渲染。
 - Output:
   - page2_entry: 完成初始化後交由 OrderUI 顯示的訂單頁。
 - Invariants:
   - 不得出現 get_table_data('payments')、update_payment_details 或 legacy payments SQL。
-  - show() 仍可載入訂單頁所需資料，且不會因查詢不存在的舊表失敗。
+  - show() 不得匯入或呼叫 services.db_service；訂單與月嫂初始資料只能分別來自 GET /api/v1/orders 與 GET /api/v1/staff。
+  - 兩支 API 都必須設定有限 timeout、驗證 BaseResponse 成功狀態、取出 data 並確認為 list；HTTP、JSON 或資料形狀錯誤時必須顯示初始化失敗並停止，不得 fallback 直連 DB。
+  - 本節點不得查詢全量 clients；在 OrderUI 舊介面移除 clients 參數前，必須以 clients=[] 呼叫殼層，不得新增第三支初始化 API。
   - show() 不得直接建立 Tab 或直接呼叫任何 Tab renderer；必須只呼叫 _render_order_page_shell(orders_data, clients, staff_list)。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_order_ui_shell_ownership.py"], "cwd": "project", "expect_exit": 0}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_order_ui_shell_ownership.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "ui\\pages\\02_orders.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
+- Non Goals:
+  - 不修改 OrderUI 或 OrderUI_Tab2_Assign 的函式簽名；clients=[] 只是本輪原子遷移的相容橋接。
+  - 不修改配對中心內部的 DbService 呼叫；該範圍屬後續 OrderUI_Tab2_Assign 節點。
+  - 不新增或修改 API Router、Service、Tab 3、Tab 4 或 Tab 5。
 - Observability: not_required
 
 ##### Module: PaymentManagementUI
@@ -377,6 +421,79 @@
   - 對選定警示呼叫 claim 或 resolve API，顯示 conflict 與 invalid transition，不在 UI 本地假設成功。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "ui\\pages\\06_finance_alerts.py"], "cwd": "project", "expect_exit": 0}
+- Observability: not_required
+
+##### Module: LineManagementUI
+- Sub Map: ui_layer
+- Type: ui_page
+- State: `planned`
+- Source: ui/pages/07_line_management.py::show
+- Dependencies: [LineAdminApiClient, LineMessageManagementUI, LineScheduleManagementUI, LineTaskManagementUI, LineRichMenuManagementUI, LineLiffManagementUI, LineReviewManagementUI]
+- Description: LINE 管理中心入口，組合登入狀態、管理分頁與各專責 LINE 管理元件。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineAdminApiClient
+- Sub Map: ui_layer
+- Type: ui_client
+- State: `planned`
+- Source: ui/api_clients/line_api_client.py
+- Description: LINE 管理頁的 HTTP client，封裝管理員登入、管理 API 呼叫與錯誤回應處理。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineMessageManagementUI
+- Sub Map: ui_layer
+- Type: ui_component
+- State: `planned`
+- Source: ui/components/line_message_manager.py::render_message_manager
+- Description: LINE 訊息內容管理分頁的渲染元件。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineScheduleManagementUI
+- Sub Map: ui_layer
+- Type: ui_component
+- State: `planned`
+- Source: ui/components/line_schedule_manager.py::render_schedule_manager
+- Description: LINE 自動通知排程管理分頁的渲染元件。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineTaskManagementUI
+- Sub Map: ui_layer
+- Type: ui_component
+- State: `planned`
+- Source: ui/components/line_task_manager.py::render_task_manager
+- Description: LINE 發送任務與執行紀錄管理分頁的渲染元件。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineRichMenuManagementUI
+- Sub Map: ui_layer
+- Type: ui_component
+- State: `planned`
+- Source: ui/components/line_rich_menu_manager.py::render_rich_menu_manager
+- Description: LINE Rich Menu 管理分頁的渲染元件。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineLiffManagementUI
+- Sub Map: ui_layer
+- Type: ui_component
+- State: `planned`
+- Source: ui/components/line_liff_manager.py::render_liff_manager
+- Description: LINE LIFF 表單管理分頁的渲染元件。
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineReviewManagementUI
+- Sub Map: ui_layer
+- Type: ui_component
+- State: `planned`
+- Source: ui/components/line_review_manager.py::render_review_manager
+- Description: LINE 待確認申請管理分頁的渲染元件。
+- Complexity: low
 - Observability: not_required
 
 ##### Module: StaffContractExcelMirror

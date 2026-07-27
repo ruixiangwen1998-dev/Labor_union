@@ -24,17 +24,16 @@
 
 import streamlit as st
 import pandas as pd
+import json
 from datetime import datetime, timedelta
 import math
-import importlib
+import re
 import calendar
-import os
 import requests
-from services import db_service
-importlib.reload(db_service)
+
+from ui.pages.shared import build_admin_headers, resolve_api_base_url
 
 title = "📅 服務人員行事曆與休假安排"
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 
 def safe_float(val) -> float:
     if val is None:
@@ -77,7 +76,8 @@ def _multi_caregiver_request(path, *, method="GET", payload=None):
     """Use only the assignment-aware APIs for the multi-caregiver panel."""
     response = requests.request(
         method,
-        f"{API_BASE_URL}{path}",
+        f"{resolve_api_base_url()}{path}",
+        headers=build_admin_headers(),
         json=payload,
         timeout=15,
     )
@@ -96,6 +96,76 @@ def _multi_caregiver_error(error):
             detail = error.response.text
         return f"HTTP {error.response.status_code}: {detail}"
     return str(error)
+
+
+def _coerce_staff_id(value):
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_iso_date_strict(value):
+    if not isinstance(value, str):
+        return None
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return parsed if parsed.isoformat() == value else None
+
+
+def _extract_case_assignments_for_staff(assignments, staff_id):
+    if not isinstance(assignments, list):
+        return []
+    target_staff_id = _coerce_staff_id(staff_id)
+    if target_staff_id is None:
+        return []
+
+    active = []
+    for assignment in assignments:
+        if not isinstance(assignment, dict):
+            continue
+        if assignment.get("status") == "cancelled":
+            continue
+        assignment_staff_id = _coerce_staff_id(assignment.get("staff_id"))
+        if assignment_staff_id == target_staff_id:
+            active.append(assignment)
+    return active
+
+
+def _parse_stored_rest_dates(raw_custom_json):
+    if not raw_custom_json:
+        return set(), None
+
+    try:
+        persisted_list = json.loads(raw_custom_json) if isinstance(raw_custom_json, str) else raw_custom_json
+    except (TypeError, json.JSONDecodeError, ValueError):
+        return set(), "先前儲存的排休資料非有效 JSON，已忽略該欄位。"
+
+    if not isinstance(persisted_list, list):
+        return set(), "先前儲存的排休資料不是清單格式，已忽略該欄位。"
+
+    parsed_dates = set()
+    invalid_items = []
+    for raw_item in persisted_list:
+        parsed = _coerce_iso_date_strict(raw_item)
+        if parsed is None:
+            invalid_items.append(raw_item)
+        else:
+            parsed_dates.add(parsed)
+
+    if invalid_items:
+        return set(), (
+            "先前儲存的排休資料含有不合法日期，已忽略該欄位："
+            + ", ".join(str(item) for item in invalid_items)
+        )
+
+    return parsed_dates, None
 
 
 def _render_multi_caregiver_panel(all_orders):
@@ -211,7 +281,18 @@ def show():
     st.write("本系統提供月嫂動態檔期月曆、訂單匹配檔期預估以及確定開始日案件之出勤天數與完工日精算。")
 
     try:
-        staff_list = db_service.get_table_data('staff')
+        admin_headers = build_admin_headers()
+
+        resp_staff = requests.get(
+            f"{resolve_api_base_url()}/api/v1/staff",
+            headers=admin_headers,
+            timeout=10,
+        )
+        resp_staff.raise_for_status()
+        staff_payload = resp_staff.json()
+        staff_list = staff_payload.get("data") if isinstance(staff_payload, dict) and staff_payload.get("success") else []
+        if not isinstance(staff_list, list):
+            staff_list = []
     except Exception as e:
         st.error(f"初始化載入服務人員資料失敗: {e}")
         return
@@ -242,8 +323,35 @@ def show():
             cal_month = st.selectbox("選擇月份", list(range(1, 13)), index=curr_month - 1)
             
         # 2. 獲取該月嫂當月的排班狀態與國定假日
-        monthly_schedules = db_service.get_staff_monthly_schedule(cal_staff_id, cal_year, cal_month)
-        holidays_raw = db_service.get_table_data("holidays")
+        try:
+            resp_sched = requests.get(
+                f"{resolve_api_base_url()}/api/v1/staff/{cal_staff_id}/monthly-schedule",
+                headers=admin_headers,
+                params={"year": cal_year, "month": cal_month},
+                timeout=10,
+            )
+            resp_sched.raise_for_status()
+            sched_payload = resp_sched.json()
+            sched_data = sched_payload.get("data") or {}
+            monthly_schedules = sched_data.get("schedule_map") or {}
+        except Exception as err_sched:
+            st.warning(f"⚠️ 月度排班資料 API 讀取失敗: {err_sched}")
+            monthly_schedules = {}
+
+        try:
+            resp_h = requests.get(
+                f"{resolve_api_base_url()}/api/v1/holidays",
+                headers=admin_headers,
+                timeout=10,
+            )
+            resp_h.raise_for_status()
+            h_payload = resp_h.json()
+            holidays_raw = h_payload.get("data") if isinstance(h_payload, dict) and h_payload.get("success") else []
+            if not isinstance(holidays_raw, list):
+                holidays_raw = []
+        except Exception as err_h:
+            st.warning(f"⚠️ 國定假日資料 API 讀取失敗: {err_h}")
+            holidays_raw = []
         
         holiday_map = {}
         for h in holidays_raw:
@@ -252,8 +360,24 @@ def show():
                 holiday_map[h_date.day] = h['holiday_name']
 
         # 3. 兩階段操作選單
-        all_orders = db_service.get_order_details()
+        try:
+            resp_o = requests.get(
+                f"{resolve_api_base_url()}/api/v1/orders",
+                headers=admin_headers,
+                timeout=10,
+            )
+            resp_o.raise_for_status()
+            o_payload = resp_o.json()
+            all_orders = o_payload.get("data") if isinstance(o_payload, dict) and o_payload.get("success") else []
+            if not isinstance(all_orders, list):
+                all_orders = []
+        except Exception as err_o:
+            st.warning(f"⚠️ 訂單資料 API 讀取失敗: {err_o}")
+            all_orders = []
+
+
         _render_multi_caregiver_panel(all_orders)
+
         
         calc_res = None
         target_order = None
@@ -320,6 +444,45 @@ def show():
                 disabled=(action_mode == "不連動，單純看行事曆")
             )
             calc_case_no = order_menu_opts[selected_order_label]
+            calc_assignment_id = None
+            if calc_case_no:
+                try:
+                    case_assignments = _multi_caregiver_request(
+                        f"/api/v1/cases/{calc_case_no}/assignment-schedules"
+                    ).get("assignments", [])
+                    active_assignments = _extract_case_assignments_for_staff(
+                        case_assignments, cal_staff_id
+                    )
+                    if len(active_assignments) == 1:
+                        calc_assignment_id = active_assignments[0].get("id")
+                        st.caption(
+                            "已自動使用該月嫂目前唯一有效的正式服務指派，"
+                            "可直接進入排休保存流程。"
+                        )
+                    elif len(active_assignments) > 1:
+                        st.warning("此案件目前有多位有效正式服務指派，請先選擇服務指派後再儲存排休。")
+                        assignment_options = {
+                            "請先選擇服務指派": None
+                        }
+                        for item in active_assignments:
+                            assignment_label = (
+                                f"#{item.get('id')} "
+                                f"{item.get('staff_name', '') or ''} "
+                                f"{item.get('assigned_start_date', '')} ～ {item.get('assigned_end_date', '')}"
+                            ).strip()
+                            assignment_options[assignment_label] = item.get("id")
+                        selected_assignment_label = st.selectbox(
+                            "2-1. 選擇正式服務指派",
+                            list(assignment_options.keys()),
+                            index=0,
+                            key=f"calendar_case_assignment_{calc_case_no}_{cal_staff_id}",
+                        )
+                        calc_assignment_id = assignment_options.get(selected_assignment_label)
+                    else:
+                        st.warning("此案件目前沒有可用的正式服務指派（未取消、且屬於該月嫂）。")
+                except (requests.RequestException, ValueError) as error:
+                    st.error(f"無法取得案例正式服務指派：{_multi_caregiver_error(error)}")
+
             if calc_case_no:
                 target_order = next((o for o in all_orders if o['case_no'] == calc_case_no), None)
 
@@ -380,27 +543,41 @@ def show():
                     custom_holiday_rest_dates = set()
                 
             with col_m2:
-                init_calc = db_service.calculate_attendance_schedule(
-                    actual_start_date=st_d,
-                    target_service_days=calc_days,
-                    service_mode=raw_service_mode
-                )
+                try:
+                    resp_calc1 = requests.post(
+                        f"{resolve_api_base_url()}/api/v1/orders/calculate-schedule",
+                        headers=admin_headers,
+                        json={
+                            "actual_start_date": str(st_d),
+                            "target_service_days": calc_days,
+                            "service_mode": raw_service_mode,
+                        },
+                        timeout=10,
+                    )
+                    resp_calc1.raise_for_status()
+                    init_calc = resp_calc1.json().get("data") or {}
+                except Exception:
+                    init_calc = {}
                 
-                potential_dates = [d_item['date'] for d_item in init_calc.get('day_by_day', [])]
+                potential_dates = [safe_date(d_item['date']) for d_item in init_calc.get('day_by_day', [])]
                 date_labels_map = {f"{d.strftime('%Y-%m-%d')} ({['週一','週二','週三','週四','週五','週六','週日'][d.weekday()]})": d for d in potential_dates}
                 
-                # 自動載入資料庫已持久化之放假日期
                 persisted_rest_dates = set()
                 raw_custom_json = target_order.get('custom_rest_dates')
                 if raw_custom_json:
-                    try:
-                        import json
-                        persisted_list = json.loads(raw_custom_json) if isinstance(raw_custom_json, str) else raw_custom_json
-                        persisted_rest_dates = {safe_date(d) for d in persisted_list if safe_date(d)}
-                    except:
-                        pass
+                    persisted_rest_dates, parse_error = _parse_stored_rest_dates(raw_custom_json)
+                    if parse_error:
+                        st.warning(parse_error)
 
-                default_rest_dates = [label for label, d in date_labels_map.items() if any(d_item['date'] == d and d_item['is_rest_day'] for d_item in init_calc.get('day_by_day', [])) or d in persisted_rest_dates]
+                default_rest_dates = [
+                    label
+                    for label, d in date_labels_map.items()
+                    if any(
+                        safe_date(d_item['date']) == d and d_item['is_rest_day']
+                        for d_item in init_calc.get('day_by_day', [])
+                    )
+                    or d in persisted_rest_dates
+                ]
                 
                 selected_rest_labels = st.multiselect(
                     "🗓️ 行事曆單日排休調整 (🟢 綠底休假，可跨週自訂點選)",
@@ -410,36 +587,60 @@ def show():
                 )
                 custom_leave_dates = {date_labels_map[k] for k in selected_rest_labels}
                 
-                # 「💾 儲存放假與動態順延」按鈕與防呆防護
                 all_rest_dt_list = [d.strftime("%Y-%m-%d") for d in (custom_leave_dates | custom_holiday_rest_dates)]
                 if st.button("💾 儲存放假與動態順延 (寫入資料庫)", type="primary", key="save_rest_dates_btn"):
-                    save_res = db_service.save_order_rest_dates(target_order['case_no'], all_rest_dt_list)
-                    if save_res.get('success'):
-                        st.success(f"✅ {save_res['message']}")
-                        st.balloons()
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {save_res.get('message')}")
+                    if not calc_assignment_id:
+                        st.error("無法判定該案件的正式服務指派，請先完成正式媒合後再保存排休。")
+                        return
+                    try:
+                        resp_save = requests.put(
+                            f"{resolve_api_base_url()}/api/v1/assignment-schedules/{calc_assignment_id}/rest-dates",
+                            headers=admin_headers,
+                            json={"rest_dates": all_rest_dt_list},
+                            timeout=10,
+                        )
+                        resp_save.raise_for_status()
+
+                        save_res = resp_save.json().get("data") or {}
+                        if save_res.get('success'):
+                            st.success(f"✅ {save_res.get('message', '成功更新休假排休日期')}")
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {save_res.get('message', '儲存放假失敗')}")
+                    except Exception as err:
+                        st.error(f"❌ 儲存放假失敗: {err}")
                 
             base_salary = safe_float(target_order.get('service_salary')) or (calc_days * 2000.0)
             
-            calc_res = db_service.calculate_attendance_schedule(
-                actual_start_date=st_d,
-                target_service_days=calc_days,
-                service_mode=raw_service_mode,
-                custom_leave_dates=custom_leave_dates,
-                custom_holiday_rest_dates=custom_holiday_rest_dates,
-                monthly_salary_base=base_salary
-            )
+            try:
+                resp_calc2 = requests.post(
+                    f"{resolve_api_base_url()}/api/v1/orders/calculate-schedule",
+                    headers=admin_headers,
+                    json={
+                        "actual_start_date": str(st_d),
+                        "target_service_days": calc_days,
+                        "service_mode": raw_service_mode,
+                        "custom_leave_dates": [str(d) for d in custom_leave_dates],
+                        "custom_holiday_rest_dates": [str(d) for d in custom_holiday_rest_dates],
+                        "monthly_salary_base": base_salary,
+                    },
+                    timeout=10,
+                )
+                resp_calc2.raise_for_status()
+                calc_res = resp_calc2.json().get("data") or {}
+            except Exception:
+                calc_res = {}
             
             if calc_res:
                 for item in calc_res.get('day_by_day', []):
-                    item_date = item['date']
+                    item_date = safe_date(item['date'])
                     if item_date.year == cal_year and item_date.month == cal_month:
                         if item['is_rest_day']:
                             green_days_set.add(item_date.day)
                         else:
                             calc_red_days_set.add(item_date.day)
+
 
     except Exception as e_step2:
         st.error(f"資料庫與選單加載失敗: {e_step2}")

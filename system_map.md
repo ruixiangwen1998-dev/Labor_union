@@ -1267,10 +1267,37 @@
 - Sub Map: root
 - Source: start.bat
 - Type: script
-- Description: 一鍵開發環境初始化腳本。固定切換至專案根目錄，啟動Docker、初始化MySQL、產生並匯入假資料，再委派根目錄開發啟動器監控FastAPI與ngrok，並啟動Streamlit。
+- Description: 一鍵開發環境初始化腳本。固定切換至專案根目錄，準備共用 INTERNAL_API_KEY，啟動Docker、初始化MySQL、產生並匯入假資料，再委派根目錄開發啟動器監控FastAPI與ngrok，並啟動Streamlit。
+- Input:
+  - env_file: 可選的專案根目錄 .env；若含 INTERNAL_API_KEY 則沿用。
+  - virtualenv_python: .venv\Scripts\python.exe。
+- Output:
+  - shared_internal_api_key: FastAPI 與 Streamlit 共用的既有或單次隨機開發金鑰。
 - Observability: not_required
 - Invariants:
   - INV-START-01: 腳本必須使用 Python 輪詢確認 MySQL 連線已可被接受，始可開始執行 init_db.py 防止連線逾時崩潰。
+  - 讀取 .env 時只接受行首 INTERNAL_API_KEY；若不存在才建立單次隨機金鑰，不得輸出金鑰值。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_admin_dev_startup_scripts.py"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+
+##### Module: DevFastApiNgrokLauncher
+- Sub Map: root
+- Source: start_fastapi_ngrok.py
+- Type: script
+- Description: 開發用FastAPI與ngrok一鍵啟動器，負責雙程序生命週期監控、異常重啟，以及LINE人工待審的一次性本機通知。
+- Input:
+  - project_root: 啟動器所在的專案根目錄
+  - fastapi_entrypoint: api.main:app
+  - tunnel_target: 127.0.0.1:8000
+- Output:
+  - development_services: FastAPI與ngrok受監控程序
+  - line_webhook_url: ngrok公開網址加上/webhook/line
+- Invariants:
+  - 僅供開發環境使用；正式環境不得依賴ngrok。
+  - FastAPI與ngrok任一程序異常停止時，另一程序必須一併安全關閉。
+  - LINE人工審核通知入口只綁定127.0.0.1，不得透過ngrok公開。
+- Observability:
+  - log: terminal
 
 ##### Module: DevFastApiNgrokLauncher
 - Sub Map: root
@@ -1299,6 +1326,7 @@
   - working_directory: 腳本所在目錄；必須先切換至 %~dp0。
   - docker_compose: 可執行的 Docker Compose 與可用 Docker Desktop。
   - virtualenv_python: .venv\Scripts\python.exe。
+  - internal_api_key: 必須已存在於程序環境或專案根目錄 .env。
 - Output:
   - running_services: FastAPI、Streamlit 與 File Watcher 的平行啟動程序。
   - failure_exit: Docker、Python 環境或資料庫就緒檢查失敗時的非零結束碼。
@@ -1309,10 +1337,57 @@
   - FastAPI 必須以實際 ASGI 入口 `api.main:app` 啟動，不得指向已改名的 `line.main:app`。
   - FastAPI、Streamlit 與 File Watcher 必須以同一個虛擬環境 Python 平行啟動。
   - 不得執行 init_db、假資料生成或其他資料初始化命令。
+  - 正式啟動不得自行產生 INTERNAL_API_KEY；只能沿用程序環境或 .env 的非空值，否則以非零狀態停止。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_online_script.py"], "cwd": "project", "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_online_script.py", "tests\\test_admin_dev_startup_scripts.py"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Non Goals:
   - 不改動 Docker Compose、API／UI 程式碼、資料庫 schema 或服務 port 策略。
+
+##### Module: AdminDevEnvironmentBootstrapService
+- Sub Map: root
+- Source: scripts/bootstrap_admin_dev_env.ps1
+- Type: script
+- State: `planned`
+- Description: 安全產生本機開發用 internal API key，並更新 Git ignored .env 中的管理員開發環境設定。
+- Input:
+  - env_file: 專案根目錄 .env。
+- Output:
+  - development_admin_environment: APP_ENV=development、ENABLE_ADMIN_AUTH=false 與隨機 INTERNAL_API_KEY。
+- Invariants:
+  - 只能修改 .env 中三個明確管理員開發設定，不得刪除或輸出其他既有環境變數。
+  - INTERNAL_API_KEY 必須使用密碼學安全亂數產生，不得硬編碼在版本控制檔案。
+  - .env 寫入失敗必須回傳非零狀態；不得修改 .env.example。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_admin_dev_startup_scripts.py"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AdminDevEnvironmentBootstrapEntrypoint
+- Sub Map: root
+- Source: bootstrap_admin_dev_env.bat
+- Type: script
+- State: `planned`
+- Description: Windows batch wrapper，從專案根目錄委派 PowerShell 管理員開發環境 bootstrap。
+- Dependencies: [AdminDevEnvironmentBootstrapService]
+- Invariants:
+  - 必須以 %~dp0 解析專案根目錄與 PowerShell 腳本，不得依賴呼叫者目前工作目錄。
+  - PowerShell 失敗時必須保留非零 exit code，不得顯示成功。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_admin_dev_startup_scripts.py"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: DevApiLauncher
+- Sub Map: root
+- Source: dev_API.bat
+- Type: script
+- State: `planned`
+- Description: 先補齊本機管理員開發環境，再委派既有 online 啟動流程的 Windows batch。
+- Dependencies: [AdminDevEnvironmentBootstrapService, OnlineScript]
+- Invariants:
+  - 必須先成功完成 bootstrap 才能呼叫 online.bat；bootstrap 失敗必須立即停止且回傳非零狀態。
+  - 不得將 INTERNAL_API_KEY 寫入此 batch 或命令列參數。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "-q", "tests\\test_admin_dev_startup_scripts.py"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
 
 ##### Module: InitDB
 - Sub Map: root
@@ -1583,6 +1658,118 @@
 - Verification:
   - must_have_assertions
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_backfill_subsidy_return_obligations.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: LineWebhookApplication
+- Sub Map: root
+- Type: api_runtime
+- State: `planned`
+- Source: line/line_bot.py
+- Dependencies: [LineWebhookSignatureVerifier, WebhookEventService]
+- Description: LINE webhook、LIFF 綁定與審核回呼的 FastAPI runtime；路由行為仍須由後續逐節點 Task 驗證。
+- Complexity: medium
+- Observability: not_required
+
+##### Module: LineTaskWorker
+- Sub Map: root
+- Type: background_worker
+- State: `planned`
+- Source: line/worker.py
+- Description: 處理已排程 LINE 任務與 rich-menu publication 的背景 worker runtime；不在本節點重複宣告管理 API 或 UI 行為。
+- Complexity: medium
+- Observability: not_required
+
+##### Module: LineWebhookSignatureVerifier
+- Sub Map: root
+- Type: security_helper
+- State: `planned`
+- Source: line/security.py::verify_line_signature
+- Description: 驗證 LINE webhook 原始 body 與簽章，不建立額外 webhook route。
+- Observability: not_required
+
+##### Module: LineRichMenuAssetSetup
+- Sub Map: root
+- Type: script
+- State: `planned`
+- Source: line/setup_rich_menus.py
+- Description: 建立 LINE rich-menu 圖像資產的維運腳本；發布與佇列邏輯仍屬 LineRichMenuService 與 LineTaskWorker。
+- Observability: not_required
+
+##### Module: LineGatewayPage
+- Sub Map: root
+- Type: static_web_asset
+- State: `planned`
+- Source: line/static/gateway.html
+- Description: LINE gateway 靜態頁面資產。
+- Observability: not_required
+
+##### Module: LineBindPage
+- Sub Map: root
+- Type: static_web_asset
+- State: `planned`
+- Source: line/static/bind.html
+- Description: LINE 帳號綁定靜態頁面資產。
+- Observability: not_required
+
+##### Module: LineRegistrationPage
+- Sub Map: root
+- Type: static_web_asset
+- State: `planned`
+- Source: line/static/register.html
+- Description: LINE 註冊靜態頁面資產。
+- Observability: not_required
+
+##### Module: LineConfirmationReviewSchema
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/97_line_confirmation_review.sql
+- Description: LINE 身分確認與人工審核所需資料表 schema；資料存取行為由 API 與 Service 節點各自承擔。
+- Observability: not_required
+
+##### Module: AdminProvisioningScript
+- Sub Map: root
+- Type: script
+- State: `planned`
+- Source: scripts/create_admin.py
+- Description: 建立管理員帳號的維運 CLI；授權與 session 行為不在此節點定義。
+- Observability: not_required
+
+##### Module: ApiContractSmokeRunner
+- Sub Map: root
+- Type: script
+- State: `planned`
+- Source: scripts/api_contract_smoke.py
+- Description: 唯讀、可重複執行的 OpenAPI API smoke 與 response contract 驗證工具；接受 runtime URL、正式 auth headers 與參數 fixture，預設只執行 GET 並展開集合型路徑，輸出可機讀報告以快速定位 401、403、404、422、500、BaseResponse 及 OpenAPI response schema 錯誤。
+- Dependencies: [APILayer]
+- Complexity: medium
+- Input:
+  - base_url: 目標 API base URL；預設 http://127.0.0.1:8000。
+  - internal_api_key: 可由 CLI 或環境變數提供的 internal service key；不得寫入報告。
+  - bearer_token: 可由 CLI 或環境變數提供的管理員 session token；不得寫入報告。
+  - fixtures_file: 可選 JSON，提供 path/query 參數與集合型端點展開值。
+  - include_pattern: 可選 endpoint path 篩選。
+  - allow_writes: 預設 false；只有明確指定時才允許非 GET/HEAD/OPTIONS。
+- Output:
+  - report: JSON 報告，逐請求保存 method、resolved path、status、契約結果與去敏感化 detail。
+  - summary: 依 pass、auth、client、server、schema、transport 分類的統計。
+  - exit_code: 所有已測端點符合預期為 0；任何非預期 HTTP 或 response contract 錯誤為非零。
+- Invariants:
+  - 預設只能執行 GET、HEAD、OPTIONS；不得因 OpenAPI 存在寫入 method 就自動送出 POST、PUT、PATCH 或 DELETE。
+  - internal key、Bearer token、Authorization header、Cookie 與其他憑證不得出現在 stdout、JSON report、exception 或 URL。
+  - 401 必須分類為 internal key 缺失/錯誤、Bearer 缺失/失效，403 必須分類為角色不足；無法由 response detail 判定時標記 auth_unknown，不得猜測。
+  - 必須驗證 JSON 形狀、BaseResponse success/data/error 契約與 OpenAPI 宣告的成功 response schema；HTTP 200 不得直接視為通過。
+  - Data Browser 集合型路徑必須展開正式可讀表清單逐一測試，不得只用 sample 取代 table path 參數。
+  - 任一必要 path/query 參數缺少 fixture 時必須標記 skipped_missing_fixture，不得送出猜測可能造成誤判的請求。
+- Algorithm:
+  - 讀取 CLI 與環境設定，建立不記錄敏感 header 的 requests Session。
+  - 下載並解析 openapi.json，只選擇 /api/v1 下符合 method 與 include filter 的 operation。
+  - 以內建安全 fixture 與外部 fixtures_file 展開 path/query；Data Browser table 以明確清單展開。
+  - 發送有限 timeout 的唯讀請求，解析 JSON 或文字錯誤並分類 HTTP/auth/transport 結果。
+  - 對成功 response 驗證 BaseResponse 與 OpenAPI schema；彙整 console table 與 JSON report，依失敗數決定 exit code。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_api_contract_smoke.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "scripts\\api_contract_smoke.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
 - Observability: not_required
 
 

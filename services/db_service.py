@@ -439,7 +439,7 @@ READONLY_SYSTEM_COLUMNS = {
     'sent_at', 'replied_at',
 }
 
-def update_table_row(table_name: str, row_id, updates: dict) -> bool:
+def update_table_row(table_name: str, row_id, updates: dict, cursor=None) -> bool:
     """
     通用單列更新函式，供「資料庫原始資料瀏覽」頁面的即時編輯表格使用。
     row_id 為該資料表主鍵值 (多數表為 id，holidays 為 holiday_date)。
@@ -459,6 +459,13 @@ def update_table_row(table_name: str, row_id, updates: dict) -> bool:
 
     set_clause = ", ".join(f"`{col}` = %s" for col in safe_updates.keys())
     values = list(safe_updates.values()) + [row_id]
+
+    if cursor is not None:
+        cursor.execute(
+            f"UPDATE `{table_name}` SET {set_clause} WHERE `{pk_col}` = %s",
+            values
+        )
+        return cursor.rowcount > 0
 
     conn = get_connection()
     try:

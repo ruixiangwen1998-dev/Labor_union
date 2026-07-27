@@ -13,6 +13,19 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
+def test_export_openapi_declares_xlsx_content_type():
+    openapi = _client().app.openapi()
+    export_paths = (
+        "/api/v1/finance-reports/accounts-payable/export",
+        "/api/v1/finance-reports/subsidy-reconciliation/quarterly/export",
+        "/api/v1/finance-reports/subsidy-reconciliation/annual/export",
+    )
+
+    for path in export_paths:
+        content = openapi["paths"][path]["get"]["responses"]["200"]["content"]
+        assert set(content) == {finance_reports.XLSX_MEDIA_TYPE}
+
+
 def _payable_row(serial: str, amount: Decimal) -> dict:
     row = {header: "" for header in accounts_payable_export.EXPORT_HEADERS}
     row[accounts_payable_export.EXPORT_HEADERS[0]] = serial

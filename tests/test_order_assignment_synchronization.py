@@ -462,6 +462,8 @@ def test_apply_uses_one_transaction_and_audits_after_explicit_removal(monkeypatc
     assert order_update[:5] == (
         Decimal("2"), Decimal("8"), Decimal("1200"), date(2026, 7, 20), date(2026, 8, 3)
     )
+    order_update_sql = next(sql for sql, _ in connection.cursor_obj.executed if "UPDATE orders" in sql)
+    assert "status = '訂單成立'" in order_update_sql
     assert any(
         "UPDATE clients SET name" in sql and params == ("王小明", "C-1")
         for sql, params in connection.cursor_obj.executed

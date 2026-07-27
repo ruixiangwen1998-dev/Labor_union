@@ -5,7 +5,7 @@ modules:
     type: api_router
     description: 訂單、時程精算與明確多月嫂指派同步 API 路由；同步端點接收完整非取消訂單目標值，只委派已部署的 Preview／Apply 服務，不能直接寫入正式資料表。
     source: api/routes/orders.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
@@ -76,10 +76,9 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: planned
-    fan_in_snapshot: 1
+    fan_in_snapshot: 2
     known_symbols:
     - apply_order_assignment_synchronization
-    - calculate_schedule
     - get_all_orders
     - get_order_by_case_no
     - preview_order_assignment_synchronization
@@ -89,7 +88,7 @@ modules:
     type: api_router
     description: 案件與配對中心 API 路由。
     source: api/routes/matches.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
@@ -131,7 +130,7 @@ modules:
     type: api_router
     description: 月嫂服務人員行事曆與動態順延排班保存 API 路由。
     source: api/routes/schedule.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
@@ -168,7 +167,7 @@ modules:
     type: api_schema
     description: 驗證案件排班日期、工作日與薪資日標記。
     source: api/schemas/schedule.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -203,7 +202,7 @@ modules:
     description: legacy payments API source 退役模組；檔案不得再宣告 APIRouter、endpoint、HTTP 410
       handler 或匯入舊 PaymentSchemas。
     source: api/routes/payments.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -240,7 +239,7 @@ modules:
     type: api_router
     description: 客戶名冊 API 路由。
     source: api/routes/clients.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
@@ -276,7 +275,7 @@ modules:
     type: api_router
     description: 服務人員名冊 API 路由。
     source: api/routes/staff.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
@@ -305,24 +304,39 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: validated
-    fan_in_snapshot: 1
+    fan_in_snapshot: 2
     known_symbols:
     - get_all_staff
   HolidayRouter:
     type: api_router
-    description: 國定假日管理 API 路由。
+    description: 僅供正式系統管理員操作的國定假日管理 API 路由。
     source: api/routes/holidays.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
     - DbService
-    input: {}
+    - AdminAuthorizationDependency
+    input:
+      admin_principal: 由 require_system_admin 產生的可信 AdminPrincipal。
     output: {}
     exceptions: []
-    invariants: []
+    invariants:
+    - GET、POST、DELETE 全部必須使用 require_system_admin；不得只保護寫入端點。
+    - 缺少或錯誤 internal service key、失效 session、角色不足時必須由正式 dependency fail-closed。
     preferred_pattern: none
-    verification: []
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_holiday_admin_route.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
     decisions: []
     todo: []
     checkpoint: []
@@ -341,7 +355,7 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: validated
-    fan_in_snapshot: 0
+    fan_in_snapshot: 2
     known_symbols:
     - add_or_update_holiday
     - delete_holiday
@@ -350,7 +364,7 @@ modules:
     type: api_router
     description: 提供 `/api/v1/client-payments` 的客戶收款與帳務摘要 API；退還補助款可查閱，解約退款功能不啟用。
     source: api/routes/client_payments.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -402,7 +416,7 @@ modules:
     type: api_router
     description: 提供 `/api/v1/staff-payments` 的月嫂應付與一次發薪實付 API。
     source: api/routes/staff_payments.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -442,7 +456,7 @@ modules:
     type: api_router
     description: Read-only staff-service contract context by case_no and formal assignment.
     source: api/routes/contracts.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -507,7 +521,7 @@ modules:
     description: Read-only accounts-payable and subsidy-reconciliation previews and
       XLSX downloads.
     source: api/routes/finance_reports.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -556,7 +570,7 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: api_layer
-    state: planned
+    state: validated
     fan_in_snapshot: 0
     known_symbols:
     - _payable_preview
@@ -573,7 +587,7 @@ modules:
     type: api_router
     description: 提供財務警示清單、詳細資料、人工認領與解除端點；警示建立及正式交易修正不對 UI 開放。
     source: api/routes/finance_alerts.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
@@ -644,7 +658,7 @@ modules:
       schedule routers with the running FastAPI application；legacy payments router
       不得再掛載。
     source: api/main.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
@@ -704,13 +718,15 @@ modules:
     state: planned
     fan_in_snapshot: 0
     known_symbols:
+    - _allowed_origins
     - api_health_check
+    - audit_authenticated_mutations
     - lifespan
   OrderSchemas:
     type: api_schema
     description: 訂單完整更新、狀態更新與排班試算的 API 請求資料模型；訂金應收日期可空，客戶身分資格不屬於可提交訂單欄位。
     source: api/schemas/orders.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -740,13 +756,13 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: planned
-    fan_in_snapshot: 1
+    fan_in_snapshot: 3
     known_symbols: []
   MatchSchemas:
     type: api_schema
     description: 媒合回覆與服務人員指派的 API 請求資料模型。
     source: api/schemas/matches.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -774,14 +790,14 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: planned
-    fan_in_snapshot: 1
+    fan_in_snapshot: 2
     known_symbols: []
   PaymentSchemas:
     type: api_schema
     description: legacy payments request schema 退役模組；不得再宣告 PaymentUpdateRequest、Pydantic
       model 或舊客戶/月嫂混合帳務欄位。
     source: api/schemas/payments.py
-    domain: null
+    domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
@@ -812,4 +828,846 @@ modules:
     sub_map: api_layer
     state: planned
     fan_in_snapshot: 0
+    known_symbols: []
+  OrderScheduleCalculationRouter:
+    type: api_router
+    description: 出勤排班試算與順延完工日精算 API 路由。
+    source: api/routes/order_schedule_calculation.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - OrderScheduleCalculationService
+    - OrderSchemas
+    input:
+      http_method: POST
+      path: /api/v1/orders/schedule-calculation
+      body: OrderScheduleCalculationRequest (含 start_date, service_days, custom_holiday_rest_dates,
+        custom_leave_dates, custom_rest_weekdays 等)。
+    output:
+      response: BaseResponse[OrderScheduleCalculationResponse]。
+    exceptions: []
+    invariants:
+    - Router 只能進行輸入驗證與 Service 委派，禁止直接執行 SQL 或修改排班。
+    - 將 Service 領域錯誤精準映射至 HTTP 狀態碼 (404, 422, 500)。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_order_schedule_calculation_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - calculate_schedule
+  AssignmentScheduleRestDateRouter:
+    type: api_router
+    description: 以 assignment_id 為專屬單元之月嫂排休與順延完工日更新 API 路由。
+    source: api/routes/assignment_schedule_rest_dates.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AssignmentScheduleRestDateService
+    - OrderSchemas
+    input:
+      http_method: PUT
+      path: /api/v1/assignment-schedules/{assignment_id}/rest-dates
+      assignment_id: 路徑參數 (int)。
+      body: 'AssignmentRestDatesUpdateRequest (含 rest_dates: list[str])。'
+      auth_context: 認證權限依賴 (security dependency)。
+    output:
+      response: BaseResponse[Dict[str, Any]]。
+    exceptions: []
+    invariants:
+    - Router 只能進行輸入驗證、認證/授權檢查與委派，禁止直接執行 SQL 或商業邏輯。
+    - 必須將 Service 領域錯誤精準映射至 HTTP 狀態碼 (404, 409, 422, 500)。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_assignment_rest_date_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - _http_status_for_service_result
+    - _is_successful
+    - save_assignment_rest_dates
+  StaffMonthlyCalendarScheduleRouter:
+    type: api_router
+    description: 月嫂月度檔期視圖 API 路由。
+    source: api/routes/staff_monthly_schedule.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - StaffMonthlyCalendarScheduleService
+    input:
+      http_method: GET
+      path: /api/v1/staff/{staff_id}/monthly-schedule
+      staff_id: 路徑參數 (int)。
+      year: 查詢參數 (int)。
+      month: 查詢參數 (int, 1-12)。
+    output:
+      response: BaseResponse[Dict[str, Any]] (含 days 陣列與 schedule_map)。
+    exceptions: []
+    invariants:
+    - 只能進行參數驗證與委派，不得直接寫 SQL 或商業邏輯。
+    - 將 Service 領域錯誤精準映射為對應 HTTP 狀態碼 (404, 422, 500)。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_staff_monthly_calendar_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - _http_status_for_service_error
+    - get_staff_monthly_schedule
+  MatchRecordRouter:
+    type: api_router
+    description: 案件與月嫂媒合紀錄查詢與建立 API 路由。
+    source: api/routes/match_records.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - MatchRecordIdempotentService
+    - MatchSchemas
+    input:
+      http_method: POST
+      path: /api/v1/match-records
+      body: MatchRecordCreateRequest (含 case_no, staff_id, response_type, notes)。
+    output:
+      response: BaseResponse[MatchRecordResponse]。
+    exceptions: []
+    invariants:
+    - Router 只能進行輸入驗證與 Service 委派，禁止直接執行 SQL 或商業邏輯。
+    - 將 Service 領域錯誤精準映射至 HTTP 狀態碼 (404, 422, 500)。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_match_record_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - create_or_get_match_record
+    - get_order_matches
+  DataBrowserAdminRouter:
+    type: api_router
+    description: 資料庫原始資料中繼權限查詢與單列微調稽核 API 路由 (須經認證/授權與 CP-1 批准始可掛載)。
+    source: api/routes/data_browser_admin.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - DataBrowserAdminSchemaService
+    - DataBrowserAdminAuditLogService
+    - AdminAuthorizationDependency
+    input:
+      http_method: GET / PATCH
+      path: /api/v1/admin/data-browser/{table} 或 /api/v1/admin/data-browser/{table}/{row_id_str}
+      table: 路徑參數 (str)。
+      row_id_str: 路徑參數 (str，支援整數識別碼與字串主鍵 case_no)。
+      body: DataBrowserPatchRequest (含 updates 字典)。
+      admin_principal: 由 require_system_admin 產生的可信 AdminPrincipal。
+    output:
+      response: BaseResponse[DataBrowserTableResponse] 或 BaseResponse[bool]。
+    exceptions: []
+    invariants:
+    - GET 與 PATCH 必須使用正式 require_system_admin，不得自行定義 Header 比對或僅依賴 URL prefix `/admin`。
+    - 操作者 username 與 role 必須完全來自經驗證之 AdminPrincipal，嚴禁接受 UI body 或 X-Auth-Context
+      指定操作者。
+    - 缺少或錯誤 internal service key、失效 session、角色不足時必須由正式 dependency 精準 fail-closed。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_data_browser_admin_route.py
+        - tests/test_data_browser_admin_service.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols:
+    - _http_status_for_data_browser_admin_error
+    - get_data_browser_table
+    - patch_data_browser_row
+  AdminAuthorizationDependency:
+    type: api_dependency
+    description: FastAPI 正式管理員授權依賴，統一驗證 internal service key、Bearer session 與最低角色。
+    source: api/dependencies/admin_auth.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AdminAuthService
+    input:
+      internal_api_key: X-Internal-API-Key header。
+      authorization: Authorization Bearer session token。
+      minimum_role: endpoint 所需最低角色。
+    output:
+      admin_principal: 經認證與角色授權的 AdminPrincipal。
+    exceptions: []
+    invariants:
+    - INTERNAL_API_KEY 未設定回 503；缺少或錯誤 internal key 回 401。
+    - 正式模式缺少、失效或過期 Bearer session 必須回 401；角色不足必須回 403。
+    - 只有 development、dev、local、test 且 ENABLE_ADMIN_AUTH 明確為 false 時才允許 session bypass；internal
+      service key 永遠不可 bypass。
+    - 成功後必須把 principal 寫入 request.state，供統一 audit middleware 使用。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_admin_auth_security.py
+        - -q
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: medium
+    algorithm:
+    - 先要求 X-Internal-API-Key，設定缺失回 503，請求缺失或不符回 401。
+    - 僅在明確 development bypass 條件成立時建立 development system_admin principal；其餘情況解析 Bearer
+      token。
+    - 將 token 委派 AdminAuthService 查詢有效 session，無有效 principal 回 401。
+    - 依 endpoint 最低角色比對 principal.role，權限不足回 403；成功後把 principal 寫入 request.state 並回傳。
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 9
+    known_symbols:
+    - admin_auth_is_enabled
+    - get_bearer_token
+    - require_admin
+    - require_internal_service
+    - require_role
+  AdminAuthRouter:
+    type: api_router
+    description: 管理後台登入、目前身分、session 續期與登出 API 路由。
+    source: api/routes/admin_auth.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AdminAuthorizationDependency
+    - AdminAuthSchemas
+    - AdminAuthService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 0
+    known_symbols:
+    - _client_ip
+    - _session_minutes
+    - login
+    - logout
+    - me
+    - refresh
+  LineAdminRouter:
+    type: api_router
+    description: LINE 管理中心健康狀態、Worker 狀態與管理功能清單 API 路由。
+    source: api/routes/line_admin.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AdminAuthorizationDependency
+    - DbService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 0
+    known_symbols:
+    - _configured
+    - _database_health
+    - line_admin_capabilities
+    - line_admin_health
+  LineTaskAdminRouter:
+    type: api_router
+    description: LINE 發送任務的查詢、立即執行、取消與失敗重送 API 路由。
+    source: api/routes/line_tasks.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AdminAuthorizationDependency
+    - LineTaskSchemas
+    - LineTaskAdminService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 0
+    known_symbols:
+    - _raise_task_error
+    - _set_task_audit
+    - cancel_task
+    - retry_task
+    - run_task_now
+    - task_detail
+    - task_list
+    - task_summary
+  LineRichMenuRouter:
+    type: api_router
+    description: LINE 下方選單圖片上傳、預覽、發布、發布紀錄與失敗重試 API 路由。
+    source: api/routes/line_rich_menus.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AdminAuthorizationDependency
+    - LineConfigSchemas
+    - LineRichMenuSchemas
+    - JsonConfigService
+    - LineRichMenuService
+    - MediaStorageService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 0
+    known_symbols:
+    - _menu
+    - _publication_error
+    - preview_rich_menu
+    - publication_detail
+    - publication_list
+    - publication_retry
+    - publish_rich_menu
+    - remove_rich_menu_image
+    - upload_rich_menu_image
+  LineReviewRouter:
+    type: api_router
+    description: LINE 月嫂身分申請與客戶帳號重新綁定的人工確認 API 路由。
+    source: api/routes/line_reviews.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AdminAuthorizationDependency
+    - LineReviewSchemas
+    - AdminAuthService
+    - LineReviewService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 0
+    known_symbols:
+    - _raise_review_error
+    - _set_review_audit
+    - approve_review
+    - reject_review
+    - review_detail
+    - review_list
+    - review_summary
+  LineSystemConfigRouter:
+    type: api_router
+    description: LINE 訊息範本、排程、下方選單、LIFF 與客服設定的管理及公開讀取 API 路由。
+    source: api/routes/line_system_config.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AdminAuthorizationDependency
+    - LineConfigSchemas
+    - JsonConfigService
+    - LineRichMenuService
+    - LineLiffConfigService
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 0
+    known_symbols:
+    - _normalize_revision
+    - _principal_name
+    - _read
+    - _render_message_template
+    - _require_liff_revision
+    - _require_line_menu_revision
+    - _require_message_schedule_revision
+    - _require_message_template_revision
+    - _save
+    - _save_liff
+    - _template_schedule_references
+    - _validate_scheduled_template_availability
+    - create_liff_field
+    - create_line_menu
+    - create_message_template
+    - delete_liff_field
+    - delete_line_menu
+    - delete_message_template
+    - get_customer_service_config
+    - get_liff_config
+    - get_liff_history
+    - get_liff_runtime
+    - get_liff_state
+    - get_line_menu
+    - get_line_menus
+    - get_line_menus_state
+    - get_message_schedules
+    - get_message_schedules_state
+    - get_message_template
+    - get_message_templates
+    - get_message_templates_state
+    - preview_line_menu
+    - preview_message_template
+    - preview_message_template_draft
+    - publish_line_menu
+    - replace_liff_config
+    - replace_line_menus
+    - replace_message_schedules
+    - replace_message_templates
+    - rollback_liff_config
+    - update_customer_service_config
+    - update_liff_field
+    - update_liff_page
+    - update_liff_theme
+    - update_line_menu
+    - update_message_template
+    - validate_liff_config
+  AdminAuthSchemas:
+    type: api_schema
+    description: 管理後台登入、公開身分與 session 回應資料模型。
+    source: api/schemas/admin_auth.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols: []
+  LineConfigSchemas:
+    type: api_schema
+    description: LINE 訊息範本、排程、下方選單、LIFF 與客服設定的資料模型及欄位驗證。
+    source: api/schemas/line_config.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 2
+    known_symbols:
+    - LiffField.choices_require_options
+    - LiffNavigationAction.safe_path
+    - LiffPage.unique_fields
+    - LiffSettingsConfig.validate_page_contracts
+    - LiffTheme.safe_css_values
+    - LineMenusConfig.unique_ids
+    - MenuAction.validate_action_value
+    - MessageSchedulesConfig.unique_ids
+    - MessageTemplate.validate_content_type
+    - MessageTemplatesConfig.unique_ids
+    - RichMenuAppearance.validate_uploaded_image
+    - RichMenuDefinition.validate_buttons
+  LineReviewSchemas:
+    type: api_schema
+    description: LINE 人工確認核准與拒絕操作的輸入資料模型。
+    source: api/schemas/line_reviews.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols: []
+  LineRichMenuSchemas:
+    type: api_schema
+    description: LINE 下方選單發布與重試操作的輸入資料模型。
+    source: api/schemas/line_rich_menus.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
+    known_symbols: []
+  LineTaskSchemas:
+    type: api_schema
+    description: LINE 發送任務取消、立即執行與重送操作的輸入資料模型。
+    source: api/schemas/line_tasks.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies: []
+    input: {}
+    output: {}
+    exceptions: []
+    invariants: []
+    preferred_pattern: none
+    verification: []
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: planned
+    fan_in_snapshot: 1
     known_symbols: []

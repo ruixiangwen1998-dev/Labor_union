@@ -1,9 +1,11 @@
 import re
+import requests
 import streamlit as st
 import pandas as pd
-from services import db_service
+from ui.pages import shared
 
 title = "🔍 資料庫原始資料瀏覽"
+
 
 # 可編輯欄位白名單 (僅本頁面即時編輯表格適用)：只有白名單內的欄位開放編輯，
 # 其餘（含未來新增欄位）一律鎖定唯讀。對照依據:
@@ -283,9 +285,22 @@ def format_col_header(col_name: str, mode: str) -> str:
     else:  # "原始英文鍵名"
         return col_name
 
+
+def _admin_headers():
+    return shared.build_admin_headers()
+
+
+def _resolve_api_base_url() -> str:
+    return shared.resolve_api_base_url()
+
 def show():
     st.title("🔍 資料庫原始資料瀏覽")
     st.write("本頁面用於瀏覽系統中各資料表的原始狀態，已支援友善中文欄位顯示對照。")
+    try:
+        admin_headers = _admin_headers()
+    except Exception as err:
+        st.error(f"未完成管理員授權設定：{err}")
+        return
     
     # 選擇要瀏覽的資料表
     table_options = {
@@ -339,7 +354,13 @@ def show():
                     st.error("請輸入假日名稱")
                 else:
                     try:
-                        db_service.add_or_update_holiday(h_date, h_name.strip(), h_double)
+                        resp_save = requests.post(
+                            f"{_resolve_api_base_url()}/api/v1/holidays",
+                            headers=admin_headers,
+                            json={"holiday_date": str(h_date), "holiday_name": h_name.strip(), "is_double_pay": h_double},
+                            timeout=10,
+                        )
+                        resp_save.raise_for_status()
                         st.success(f"成功儲存假日: {h_name} ({h_date})")
                         st.rerun()
                     except Exception as err:
@@ -348,7 +369,13 @@ def show():
         with col_del:
             st.write("❌ 刪除假日")
             try:
-                current_holidays = db_service.get_table_data("holidays")
+                resp_h_list = requests.get(
+                    f"{_resolve_api_base_url()}/api/v1/holidays",
+                    headers=admin_headers,
+                    timeout=10,
+                )
+                resp_h_list.raise_for_status()
+                current_holidays = resp_h_list.json().get("data") or []
                 if not current_holidays:
                     st.info("目前無國定假日可刪除。")
                 else:
@@ -357,7 +384,12 @@ def show():
                     del_date = del_options[selected_del]
                     if st.button("確認刪除此假日"):
                         try:
-                            db_service.delete_holiday(del_date)
+                            resp_del = requests.delete(
+                                f"{_resolve_api_base_url()}/api/v1/holidays/{del_date}",
+                                headers=admin_headers,
+                                timeout=10,
+                            )
+                            resp_del.raise_for_status()
                             st.success("假日已刪除")
                             st.rerun()
                         except Exception as err:
@@ -367,9 +399,21 @@ def show():
         st.markdown("---")
 
     try:
-        # 從服務層獲取資料，不包含任何 SQL 或資料庫連線代碼
-        raw_data = db_service.get_table_data(table_name)
-        table_columns = db_service.get_table_columns(table_name)
+        resp_admin = requests.get(
+            f"{_resolve_api_base_url()}/api/v1/admin/data-browser/{table_name}",
+            headers=admin_headers,
+            timeout=15,
+        )
+        resp_admin.raise_for_status()
+        admin_payload = resp_admin.json()
+        admin_data = admin_payload.get("data") or {}
+
+        raw_data = admin_data.get("rows", [])
+        table_columns = admin_data.get("columns", [])
+        pk_col = admin_data.get("primary_key", "id")
+        editable_cols = set(admin_data.get("editable_columns") or [])
+        is_read_only = admin_data.get("read_only", False)
+        valid_options = admin_data.get("valid_options") or {}
 
         if not raw_data:
             st.info(f"資料表 `{table_name}` 目前沒有任何數據，已為你顯示欄位清單。")
@@ -381,14 +425,10 @@ def show():
             df = pd.DataFrame(raw_data)
 
         if df.empty:
-            # 空表仍需保持欄位顯示，並保留欄位名稱對照
             filtered_df = df.copy()
 
             rename_map = {col: format_col_header(col, header_mode) for col in filtered_df.columns}
             display_df = filtered_df.rename(columns=rename_map)
-
-            editable_cols = EDITABLE_COLUMNS.get(table_name, set())
-            valid_options = COLUMN_VALID_OPTIONS.get(table_name, {})
 
             column_config = {}
             for original_col, display_col in rename_map.items():
@@ -407,38 +447,24 @@ def show():
                 width='stretch',
                 num_rows="fixed",
                 column_config=column_config,
-                disabled=[rename_map[db_service.TABLE_PRIMARY_KEYS.get(table_name, "id")]]
-                if db_service.TABLE_PRIMARY_KEYS.get(table_name, "id") in rename_map else False,
+                disabled=[rename_map[pk_col]] if pk_col in rename_map else False,
                 key=f"editor_empty_{table_name}",
             )
 
-            if table_name in READ_ONLY_TABLES:
-                st.info("此資料表目前為複合主鍵子表（服務人員關聯表），僅供瀏覽，暫不開放即時儲存。")
+            if is_read_only:
+                st.info("此資料表目前為唯讀保護模式，僅供瀏覽，不開放即時寫入。")
             return
 
-        # 主鍵欄位 (用於即時編輯後回寫資料庫的比對依據)
-        pk_col = db_service.TABLE_PRIMARY_KEYS.get(table_name, "id")
-
-        # 簡易搜尋過濾功能
         search_query = st.text_input("🔍 搜尋表格內容", "")
         if search_query:
-            # 在所有欄位中搜尋匹配的字串
-            # ponytail: convert to string and search case-insensitively
             mask = df.astype(str).apply(lambda x: x.str.contains(search_query, case=False)).any(axis=1)
             filtered_df = df[mask].copy()
         else:
             filtered_df = df.copy()
 
-        # 套用 ADAD INV-UI-BROWSER-01 欄位標籤轉換
         rename_map = {col: format_col_header(col, header_mode) for col in filtered_df.columns}
         display_df = filtered_df.rename(columns=rename_map)
         reverse_rename_map = {v: k for k, v in rename_map.items()}
-
-        # 可編輯欄位白名單：僅白名單內的欄位開放編輯，其餘（含未來新增欄位）一律鎖定唯讀
-        editable_cols = EDITABLE_COLUMNS.get(table_name, set())
-        # 限制輸入選項的欄位改用下拉選單，避免自由輸入文字造成不合法的值
-        valid_options = COLUMN_VALID_OPTIONS.get(table_name, {})
-        # 格式檢核欄位 (行動電話、Email)
         format_validators = COLUMN_FORMAT_VALIDATORS.get(table_name, {})
 
         column_config = {}
@@ -452,7 +478,7 @@ def show():
                 column_config[display_col] = st.column_config.Column(disabled=True)
 
         st.write(f"共 {len(filtered_df)} 筆資料 (總共 {len(df)} 筆)")
-        st.caption("💡 可直接在表格中點選儲存格修改內容（灰色欄位為系統/關聯欄位，唯讀鎖定；下拉選單欄位僅能從清單中選擇），修改完成後請務必點擊下方「💾 儲存變更」按鈕才會真正寫入資料庫。")
+        st.caption("💡 可直接在表格中點選儲存格修改內容（灰色欄位為系統/關聯欄位，唯讀鎖定；下拉選單欄位僅能從清單中選擇），修改完成後請務必點擊下方「💾 儲存變更」按鈕才會寫入資料庫。")
 
         edited_display_df = st.data_editor(
             display_df,
@@ -463,10 +489,9 @@ def show():
             key=f"editor_{table_name}",
         )
 
-        if table_name in READ_ONLY_TABLES:
-            st.info("此資料表目前為複合主鍵子表（服務人員關聯表），僅供瀏覽，暫不開放即時儲存。")
+        if is_read_only:
+            st.info("此資料表目前為唯讀保護模式，僅供瀏覽，不開放即時寫入。")
         elif st.button("💾 儲存變更", type="primary"):
-            # 還原欄位名稱回原始英文鍵名，逐列比對差異並只送出真正改動過的欄位
             edited_df = edited_display_df.rename(columns=reverse_rename_map)
             original_df = filtered_df.set_index(pk_col, drop=False)
             edited_df = edited_df.set_index(pk_col, drop=False)
@@ -483,13 +508,11 @@ def show():
                         continue
                     old_val = original_row.get(col)
                     new_val = edited_row.get(col)
-                    # 統一轉為字串比較，避免 NaN/None/型態不一致誤判為有變動
                     old_str = "" if pd.isna(old_val) else str(old_val)
                     new_str = "" if pd.isna(new_val) else str(new_val)
                     if old_str != new_str:
                         changed_fields[col] = None if pd.isna(new_val) else new_val
 
-                # 儲存前檢核格式限定欄位（行動電話、Email），空值視為清空允許通過
                 format_err = None
                 for col, val in changed_fields.items():
                     if col in format_validators and val:
@@ -502,7 +525,13 @@ def show():
                     errors.append(format_err)
                 elif changed_fields:
                     try:
-                        db_service.update_table_row(table_name, row_id, changed_fields)
+                        patch_resp = requests.patch(
+                            f"{_resolve_api_base_url()}/api/v1/admin/data-browser/{table_name}/{row_id}",
+                            headers=admin_headers,
+                            json={"updates": changed_fields},
+                            timeout=15,
+                        )
+                        patch_resp.raise_for_status()
                         updated_rows += 1
                     except Exception as row_err:
                         errors.append(f"第 {row_id} 筆更新失敗: {row_err}")
@@ -511,10 +540,10 @@ def show():
                 for err_msg in errors:
                     st.error(err_msg)
             if updated_rows > 0:
-                st.success(f"✅ 已成功儲存 {updated_rows} 筆變更資料！")
+                st.success(f"✅ 已成功經由 Admin API 儲存 {updated_rows} 筆變更資料並寫入稽核日誌！")
                 st.rerun()
             elif not errors:
                 st.info("目前沒有偵測到任何欄位變動。")
 
     except Exception as e:
-        st.error(f"讀取資料表出錯: {e}")
+        st.error(f"❌ 讀取資料庫中繼資料 API 出錯: {e}")

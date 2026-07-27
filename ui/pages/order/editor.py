@@ -13,8 +13,7 @@ import math
 import importlib
 import os
 import requests
-from services import db_service
-importlib.reload(db_service)
+
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 
@@ -116,7 +115,30 @@ def _derive_subsidy_refund_date(order: dict) -> str:
     return (datetime(end_date.year, end_date.month, month_end_day).date() + timedelta(days=5)).isoformat()
 
 
+def _generate_virtual_account(case_no) -> str:
+    if not case_no:
+        return ""
+    case_no_str = str(case_no).strip()
+    if len(case_no_str) == 9 and case_no_str.isdigit():
+        year = case_no_str[:3]
+        try:
+            seq = int(case_no_str[3:])
+            return f"99781699{year}{seq:03d}"
+        except ValueError:
+            pass
+    digits = "".join(filter(str.isdigit, case_no_str))
+    if len(digits) >= 3:
+        year = digits[:3]
+        try:
+            seq = int(digits[3:]) if len(digits) > 3 else 0
+            return f"99781699{year}{seq:03d}"
+        except ValueError:
+            pass
+    return ""
+
+
 def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
+
     """
     可重用的單筆訂單編輯器渲染函式 (EditOrderUI Core)。
     分頁一的手風琴展開面板可以直接內嵌呼叫同一套試算/編輯邏輯。
@@ -136,7 +158,33 @@ def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
     st.write("🔒 **公式欄位安全鎖定**")
     is_unlocked = st.checkbox("🔓 強制解鎖自訂衍生公式欄位", value=False, key=f"{key_prefix}_unlock_toggle_{target_case_no}")
 
-    curr_p = next((p for p in payments_raw if p.get('case_no') == target_order.get('case_no')), {})
+    def api_request(path, *, method="GET", payload=None):
+        response = requests.request(
+            method,
+            f"{API_BASE_URL}{path}",
+            json=payload,
+            timeout=15,
+        )
+        try:
+            body = response.json()
+        except ValueError:
+            body = {"detail": response.text}
+        if not response.ok:
+            raise ValueError(f"HTTP {response.status_code}: {body.get('detail') or body.get('message') or body}")
+        if not body.get("success", False):
+            raise ValueError(body.get("error") or body.get("message") or "同步 API 請求失敗")
+        return body.get("data") or {}
+
+    curr_p = {}
+    payment_error = None
+    try:
+        curr_p = api_request(f"/api/v1/client-payments/{target_case_no}")
+    except (requests.RequestException, ValueError) as error:
+        payment_error = str(error)
+        curr_p = next((p for p in payments_raw if p.get('case_no') == target_order.get('case_no')), {})
+
+    if payment_error and not curr_p:
+        st.caption(f"帳務資料載入失敗（維持空白帳務欄位）：{payment_error}")
 
     # 若開啟解鎖，跳出警告 Alert (INV-EDIT-04)
     if is_unlocked:
@@ -183,12 +231,22 @@ def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
             # 只有已確認實際開始日才計算實際結束日，避免預期日期或今天被寫回。
             calc_act_end = None
             if w_act_start:
-                calc_out = db_service.calculate_attendance_schedule(
-                    actual_start_date=w_act_start,
-                    target_service_days=w_service_days,
-                    service_mode=w_service_mode
-                )
-                calc_act_end = calc_out.get('actual_end_date', w_act_start + timedelta(days=w_service_days-1))
+                try:
+                    resp_calc = requests.post(
+                        f"{API_BASE_URL}/api/v1/orders/calculate-schedule",
+                        json={
+                            "actual_start_date": str(w_act_start),
+                            "target_service_days": w_service_days,
+                            "service_mode": w_service_mode,
+                        },
+                        timeout=10,
+                    )
+                    resp_calc.raise_for_status()
+                    calc_out = resp_calc.json().get("data") or {}
+                    calc_act_end = safe_date(calc_out.get('actual_end_date')) or (w_act_start + timedelta(days=w_service_days-1))
+                except Exception:
+                    calc_act_end = w_act_start + timedelta(days=w_service_days-1)
+
             
             if not is_unlocked:
                 end_text = calc_act_end.strftime('%Y-%m-%d') if calc_act_end else '尚未設定實際服務開始日'
@@ -238,11 +296,12 @@ def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
         with mc2:
             w_deposit_days = st.number_input("訂金天數", value=max(1, safe_int(target_order.get('deposit_days', 1))), min_value=1, step=1, key=f"{key_prefix}_dep_d_{target_case_no}")
             calc_deposit_amt = w_deposit_days * w_employer_rate
-            display_dep_amt = calc_deposit_amt if not is_unlocked else safe_int(target_order.get('deposit_amount', calc_deposit_amt))
-            w_deposit_amt = st.number_input("訂金 (元)", value=display_dep_amt, disabled=not is_unlocked, step=100, key=f"{key_prefix}_dep_amt_{target_case_no}_{display_dep_amt}")
+            display_dep_amt = safe_int(curr_p.get("deposit_receivable") if curr_p else calc_deposit_amt)
+            w_deposit_amt = st.number_input("訂金 (元)", value=display_dep_amt, disabled=True, step=100, key=f"{key_prefix}_dep_amt_{target_case_no}_{display_dep_amt}")
             w_dep_due_date = st.date_input(
                 "訂金應收日期",
                 value=safe_optional_date(curr_p.get('deposit_due_date') or target_order.get('deposit_date')),
+                disabled=True,
                 key=f"{key_prefix}_dep_due_date_{target_case_no}",
                 help="公會人員手動填寫；未填時維持空白。",
             )
@@ -251,19 +310,29 @@ def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
             half_days = safe_int(w_service_days / 2)
             w_first_pay_days = st.number_input("第一期款天數", value=safe_int(target_order.get('first_payment_days', half_days)), step=1, key=f"{key_prefix}_p1_days_{target_case_no}")
             calc_first_pay_amt = w_first_pay_days * w_employer_rate
-            display_first_pay = calc_first_pay_amt if not is_unlocked else safe_int(target_order.get('first_payment_amount', calc_first_pay_amt))
-            w_first_pay_amt = st.number_input("第一期金額 (元)", value=display_first_pay, disabled=not is_unlocked, step=100, key=f"{key_prefix}_p1_amt_{target_case_no}_{display_first_pay}")
-            w_first_pay_due_date = st.date_input("第一期款應收日期", value=safe_date(curr_p.get('first_payment_due_date') or target_order.get('first_payment_date')), key=f"{key_prefix}_p1_due_date_{target_case_no}")
+            display_first_pay = safe_int(curr_p.get("first_payment_receivable") if curr_p else calc_first_pay_amt)
+            w_first_pay_amt = st.number_input("第一期金額 (元)", value=display_first_pay, disabled=True, step=100, key=f"{key_prefix}_p1_amt_{target_case_no}_{display_first_pay}")
+            w_first_pay_due_date = st.date_input(
+                "第一期款應收日期",
+                value=safe_optional_date(curr_p.get('first_payment_due_date') or target_order.get('first_payment_date')),
+                disabled=True,
+                key=f"{key_prefix}_p1_due_date_{target_case_no}",
+            )
 
         st.markdown("---")
         m2_c1, m2_c2 = st.columns(2)
         with m2_c1:
             w_second_pay_days = st.number_input("第二期款天數", value=safe_int(target_order.get('second_payment_days', w_service_days - w_first_pay_days)), step=1, key=f"{key_prefix}_p2_days_{target_case_no}")
             calc_second_pay_amt = w_total_self_pay - (w_deposit_amt + w_floor_fee) - w_first_pay_amt
-            display_second_pay = calc_second_pay_amt if not is_unlocked else safe_int(target_order.get('second_payment_amount', calc_second_pay_amt))
-            w_second_pay_amt = st.number_input("第二期金額 (元)", value=display_second_pay, disabled=not is_unlocked, step=100, key=f"{key_prefix}_p2_amt_{target_case_no}_{display_second_pay}")
+            display_second_pay = safe_int(curr_p.get("second_payment_receivable") if curr_p else calc_second_pay_amt)
+            w_second_pay_amt = st.number_input("第二期金額 (元)", value=display_second_pay, disabled=True, step=100, key=f"{key_prefix}_p2_amt_{target_case_no}_{display_second_pay}")
         with m2_c2:
-            w_second_pay_due_date = st.date_input("第二期款應收日期", value=safe_date(curr_p.get('second_payment_due_date') or target_order.get('second_payment_date')), key=f"{key_prefix}_p2_due_date_{target_case_no}")
+            w_second_pay_due_date = st.date_input(
+                "第二期款應收日期",
+                value=safe_optional_date(curr_p.get('second_payment_due_date') or target_order.get('second_payment_date')),
+                disabled=True,
+                key=f"{key_prefix}_p2_due_date_{target_case_no}",
+            )
 
     # =========================================================================
     # 區塊四：💵 服務人員薪資與市府請款區
@@ -290,7 +359,8 @@ def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
         st.markdown("### 📝 五、實收對帳、狀態與備註登錄區")
         
         # ponytail: Show the 14-digit virtual account corresponding to the current case
-        va_val = db_service.generate_virtual_account(target_order.get('case_no'))
+        va_val = _generate_virtual_account(target_order.get('case_no'))
+
         if va_val:
             st.markdown(f"**🔗 專屬虛擬帳號**: `{va_val}`")
 
@@ -310,12 +380,12 @@ def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
                 key=f"{key_prefix}_subsidy_refund_date_{target_case_no}",
                 help="依服務結束日與身分資格自動推估，僅供參考，不可編輯。",
             )
-            w_dep_rec = st.number_input("已收訂金 (元)", value=safe_int(curr_p.get('deposit_received')), step=100, key=f"{key_prefix}_dep_rec_{target_case_no}")
-            w_dep_rec_date = st.date_input("訂金實收日期", value=safe_date(curr_p.get('deposit_received_at')), key=f"{key_prefix}_dep_rec_date_{target_case_no}")
-            w_p1_rec = st.number_input("已收第一期款 (元)", value=safe_int(curr_p.get('first_payment_received')), step=100, key=f"{key_prefix}_p1_rec_{target_case_no}")
-            w_p1_rec_date = st.date_input("第一期款收取日期", value=safe_date(curr_p.get('first_payment_received_at')), key=f"{key_prefix}_p1_rec_date_{target_case_no}")
-            w_p2_rec = st.number_input("已收第二期款 (元)", value=safe_int(curr_p.get('second_payment_received')), step=100, key=f"{key_prefix}_p2_rec_{target_case_no}")
-            w_p2_rec_date = st.date_input("第二期款收取日期", value=safe_date(curr_p.get('second_payment_received_at')), key=f"{key_prefix}_p2_rec_date_{target_case_no}")
+            w_dep_rec = st.number_input("已收訂金 (元)", value=safe_int(curr_p.get('deposit_received')), disabled=True, step=100, key=f"{key_prefix}_dep_rec_{target_case_no}")
+            w_dep_rec_date = st.date_input("訂金實收日期", value=safe_optional_date(curr_p.get('deposit_received_at')), disabled=True, key=f"{key_prefix}_dep_rec_date_{target_case_no}")
+            w_p1_rec = st.number_input("已收第一期款 (元)", value=safe_int(curr_p.get('first_payment_received')), disabled=True, step=100, key=f"{key_prefix}_p1_rec_{target_case_no}")
+            w_p1_rec_date = st.date_input("第一期款收取日期", value=safe_optional_date(curr_p.get('first_payment_received_at')), disabled=True, key=f"{key_prefix}_p1_rec_date_{target_case_no}")
+            w_p2_rec = st.number_input("已收第二期款 (元)", value=safe_int(curr_p.get('second_payment_received')), disabled=True, step=100, key=f"{key_prefix}_p2_rec_{target_case_no}")
+            w_p2_rec_date = st.date_input("第二期款收取日期", value=safe_optional_date(curr_p.get('second_payment_received_at')), disabled=True, key=f"{key_prefix}_p2_rec_date_{target_case_no}")
             
             status_list = ["洽談中", "訂單成立", "服務中", "訂單完成", "訂單取消"]
             c_status = target_order['order_status']
@@ -336,29 +406,27 @@ def render_editor(target_case_no, orders_data, payments_raw, key_prefix="v25"):
     st.markdown("### 🔄 訂單、月嫂指派與行事曆同步")
     st.caption("服務天數、日期或時數變更必須先預覽，再明確確認排班移除後套用；本頁不會直接寫入訂單、指派或帳務資料。")
 
-    if w_order_status != target_order["order_status"]:
-        st.warning("訂單狀態／取消流程不屬於本次排班同步；請先還原狀態後再套用同步變更。")
+    status_changed = w_order_status != target_order["order_status"]
+    if status_changed:
+        st.warning("訂單狀態已變更，請先儲存狀態後再進行同步。")
+        if st.button("更新訂單狀態", key=f"{key_prefix}_update_status_{target_case_no}"):
+            if w_order_status == "訂單取消" and not w_cancel_reason.strip():
+                st.error("訂單取消必須輸入取消原因。")
+            else:
+                try:
+                    api_request(
+                        f"/api/v1/orders/{target_case_no}/status",
+                        method="PUT",
+                        payload={"status": w_order_status, "cancel_reason": w_cancel_reason.strip() or None},
+                    )
+                    st.success("訂單狀態更新完成，畫面將重新載入。")
+                    st.rerun()
+                except (requests.RequestException, ValueError) as error:
+                    st.error(f"狀態更新失敗：{error}")
         return
     if not w_act_start or not w_act_end:
         st.warning("請先提供實際開工日與服務結束日，才能建立可驗證的同步計畫。")
         return
-
-    def api_request(path, *, method="GET", payload=None):
-        response = requests.request(
-            method,
-            f"{API_BASE_URL}{path}",
-            json=payload,
-            timeout=15,
-        )
-        try:
-            body = response.json()
-        except ValueError:
-            body = {"detail": response.text}
-        if not response.ok:
-            raise ValueError(f"HTTP {response.status_code}: {body.get('detail') or body.get('message') or body}")
-        if not body.get("success", False):
-            raise ValueError(body.get("error") or body.get("message") or "同步 API 請求失敗")
-        return body.get("data") or {}
 
     try:
         current_assignments = api_request(

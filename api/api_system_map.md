@@ -7,6 +7,10 @@
 
 ### API 功能層模組全覽表
 
+### Domain: API
+- Description: FastAPI routers, request and response schemas, and authorization dependencies.
+- Allowed Dependencies: [Services]
+
 ##### Module: OrderRouter
 - Sub Map: api_layer
 - Source: api/routes/orders.py
@@ -99,8 +103,15 @@
 - Source: api/routes/holidays.py
 - Type: api_router
 - State: `validated`
-- Description: 國定假日管理 API 路由。
-- Dependencies: [DbService]
+- Description: 僅供正式系統管理員操作的國定假日管理 API 路由。
+- Dependencies: [DbService, AdminAuthorizationDependency]
+- Input:
+  - admin_principal: 由 require_system_admin 產生的可信 AdminPrincipal。
+- Invariants:
+  - GET、POST、DELETE 全部必須使用 require_system_admin；不得只保護寫入端點。
+  - 缺少或錯誤 internal service key、失效 session、角色不足時必須由正式 dependency fail-closed。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_holiday_admin_route.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
 
 ##### Module: ClientPaymentRouter
@@ -254,4 +265,270 @@
 - Invariants:
   - api/schemas/payments.py 不得包含 BaseModel、PaymentUpdateRequest、caregiver_fee、caregiver_paid_at 或三階段舊更新 payload。
 - Verification: []
+- Observability: not_required
+
+##### Module: OrderScheduleCalculationRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/order_schedule_calculation.py
+- Description: 出勤排班試算與順延完工日精算 API 路由。
+- Dependencies: [OrderScheduleCalculationService, OrderSchemas]
+- Complexity: low
+- Input:
+  - http_method: POST
+  - path: /api/v1/orders/schedule-calculation
+  - body: OrderScheduleCalculationRequest (含 start_date, service_days, custom_holiday_rest_dates, custom_leave_dates, custom_rest_weekdays 等)。
+- Output:
+  - response: BaseResponse[OrderScheduleCalculationResponse]。
+- Idempotency:
+  - 相同請求 body 試算回應一致結果，具備完全等冪性。
+- Invariants:
+  - Router 只能進行輸入驗證與 Service 委派，禁止直接執行 SQL 或修改排班。
+  - 將 Service 領域錯誤精準映射至 HTTP 狀態碼 (404, 422, 500)。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_order_schedule_calculation_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: AssignmentScheduleRestDateRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/assignment_schedule_rest_dates.py
+- Description: 以 assignment_id 為專屬單元之月嫂排休與順延完工日更新 API 路由。
+- Dependencies: [AssignmentScheduleRestDateService, OrderSchemas]
+- Complexity: low
+- Input:
+  - http_method: PUT
+  - path: /api/v1/assignment-schedules/{assignment_id}/rest-dates
+  - assignment_id: 路徑參數 (int)。
+  - body: AssignmentRestDatesUpdateRequest (含 rest_dates: list[str])。
+  - auth_context: 認證權限依賴 (security dependency)。
+- Output:
+  - response: BaseResponse[Dict[str, Any]]。
+- Idempotency:
+  - 重複送出相同 assignment_id 與 rest_dates 具備等冪性，回應一致結果。
+- Invariants:
+  - Router 只能進行輸入驗證、認證/授權檢查與委派，禁止直接執行 SQL 或商業邏輯。
+  - 必須將 Service 領域錯誤精準映射至 HTTP 狀態碼 (404, 409, 422, 500)。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_assignment_rest_date_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: StaffMonthlyCalendarScheduleRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/staff_monthly_schedule.py
+- Description: 月嫂月度檔期視圖 API 路由。
+- Dependencies: [StaffMonthlyCalendarScheduleService]
+- Complexity: low
+- Input:
+  - http_method: GET
+  - path: /api/v1/staff/{staff_id}/monthly-schedule
+  - staff_id: 路徑參數 (int)。
+  - year: 查詢參數 (int)。
+  - month: 查詢參數 (int, 1-12)。
+- Output:
+  - response: BaseResponse[Dict[str, Any]] (含 days 陣列與 schedule_map)。
+- Idempotency:
+  - 重複查詢結果一致，具備完全等冪性。
+- Invariants:
+  - 只能進行參數驗證與委派，不得直接寫 SQL 或商業邏輯。
+  - 將 Service 領域錯誤精準映射為對應 HTTP 狀態碼 (404, 422, 500)。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_staff_monthly_calendar_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: MatchRecordRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/match_records.py
+- Description: 案件與月嫂媒合紀錄查詢與建立 API 路由。
+- Dependencies: [MatchRecordIdempotentService, MatchSchemas]
+- Complexity: low
+- Input:
+  - http_method: POST
+  - path: /api/v1/match-records
+  - body: MatchRecordCreateRequest (含 case_no, staff_id, response_type, notes)。
+- Output:
+  - response: BaseResponse[MatchRecordResponse]。
+- Idempotency:
+  - 相同 (case_no, staff_id) 重複發送具備等冪性，不拋出 500。
+- Invariants:
+  - Router 只能進行輸入驗證與 Service 委派，禁止直接執行 SQL 或商業邏輯。
+  - 將 Service 領域錯誤精準映射至 HTTP 狀態碼 (404, 422, 500)。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_match_record_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: DataBrowserAdminRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/data_browser_admin.py
+- Description: 資料庫原始資料中繼權限查詢與單列微調稽核 API 路由 (須經認證/授權與 CP-1 批准始可掛載)。
+- Dependencies: [DataBrowserAdminSchemaService, DataBrowserAdminAuditLogService, AdminAuthorizationDependency]
+- Complexity: low
+- Input:
+  - http_method: GET / PATCH
+  - path: /api/v1/admin/data-browser/{table} 或 /api/v1/admin/data-browser/{table}/{row_id_str}
+  - table: 路徑參數 (str)。
+  - row_id_str: 路徑參數 (str，支援整數識別碼與字串主鍵 case_no)。
+  - body: DataBrowserPatchRequest (含 updates 字典)。
+  - admin_principal: 由 require_system_admin 產生的可信 AdminPrincipal。
+- Output:
+  - response: BaseResponse[DataBrowserTableResponse] 或 BaseResponse[bool]。
+- Idempotency:
+  - 相同的 PATCH updates 請求重複送出具備等冪性。
+- Invariants:
+  - GET 與 PATCH 必須使用正式 require_system_admin，不得自行定義 Header 比對或僅依賴 URL prefix `/admin`。
+  - 操作者 username 與 role 必須完全來自經驗證之 AdminPrincipal，嚴禁接受 UI body 或 X-Auth-Context 指定操作者。
+  - 缺少或錯誤 internal service key、失效 session、角色不足時必須由正式 dependency 精準 fail-closed。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_data_browser_admin_route.py", "tests/test_data_browser_admin_service.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+
+##### Module: AdminAuthorizationDependency
+- Sub Map: api_layer
+- Type: api_dependency
+- State: `planned`
+- Source: api/dependencies/admin_auth.py
+- Description: FastAPI 正式管理員授權依賴，統一驗證 internal service key、Bearer session 與最低角色。
+- Dependencies: [AdminAuthService]
+- Complexity: medium
+- Input:
+  - internal_api_key: X-Internal-API-Key header。
+  - authorization: Authorization Bearer session token。
+  - minimum_role: endpoint 所需最低角色。
+- Output:
+  - admin_principal: 經認證與角色授權的 AdminPrincipal。
+- Algorithm:
+  - 先要求 X-Internal-API-Key，設定缺失回 503，請求缺失或不符回 401。
+  - 僅在明確 development bypass 條件成立時建立 development system_admin principal；其餘情況解析 Bearer token。
+  - 將 token 委派 AdminAuthService 查詢有效 session，無有效 principal 回 401。
+  - 依 endpoint 最低角色比對 principal.role，權限不足回 403；成功後把 principal 寫入 request.state 並回傳。
+- Invariants:
+  - INTERNAL_API_KEY 未設定回 503；缺少或錯誤 internal key 回 401。
+  - 正式模式缺少、失效或過期 Bearer session 必須回 401；角色不足必須回 403。
+  - 只有 development、dev、local、test 且 ENABLE_ADMIN_AUTH 明確為 false 時才允許 session bypass；internal service key 永遠不可 bypass。
+  - 成功後必須把 principal 寫入 request.state，供統一 audit middleware 使用。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_admin_auth_security.py", "-q"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AdminAuthRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/admin_auth.py
+- Description: 管理後台登入、目前身分、session 續期與登出 API 路由。
+- Dependencies: [AdminAuthorizationDependency, AdminAuthSchemas, AdminAuthService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineAdminRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/line_admin.py
+- Description: LINE 管理中心健康狀態、Worker 狀態與管理功能清單 API 路由。
+- Dependencies: [AdminAuthorizationDependency, DbService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineTaskAdminRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/line_tasks.py
+- Description: LINE 發送任務的查詢、立即執行、取消與失敗重送 API 路由。
+- Dependencies: [AdminAuthorizationDependency, LineTaskSchemas, LineTaskAdminService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineRichMenuRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/line_rich_menus.py
+- Description: LINE 下方選單圖片上傳、預覽、發布、發布紀錄與失敗重試 API 路由。
+- Dependencies: [AdminAuthorizationDependency, LineConfigSchemas, LineRichMenuSchemas, JsonConfigService, LineRichMenuService, MediaStorageService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineReviewRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/line_reviews.py
+- Description: LINE 月嫂身分申請與客戶帳號重新綁定的人工確認 API 路由。
+- Dependencies: [AdminAuthorizationDependency, LineReviewSchemas, AdminAuthService, LineReviewService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineSystemConfigRouter
+- Sub Map: api_layer
+- Type: api_router
+- State: `planned`
+- Source: api/routes/line_system_config.py
+- Description: LINE 訊息範本、排程、下方選單、LIFF 與客服設定的管理及公開讀取 API 路由。
+- Dependencies: [AdminAuthorizationDependency, LineConfigSchemas, JsonConfigService, LineRichMenuService, LineLiffConfigService]
+- Complexity: low
+- Observability: not_required
+
+##### Module: AdminAuthSchemas
+- Sub Map: api_layer
+- Type: api_schema
+- State: `planned`
+- Source: api/schemas/admin_auth.py
+- Description: 管理後台登入、公開身分與 session 回應資料模型。
+- Dependencies: []
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineConfigSchemas
+- Sub Map: api_layer
+- Type: api_schema
+- State: `planned`
+- Source: api/schemas/line_config.py
+- Description: LINE 訊息範本、排程、下方選單、LIFF 與客服設定的資料模型及欄位驗證。
+- Dependencies: []
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineReviewSchemas
+- Sub Map: api_layer
+- Type: api_schema
+- State: `planned`
+- Source: api/schemas/line_reviews.py
+- Description: LINE 人工確認核准與拒絕操作的輸入資料模型。
+- Dependencies: []
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineRichMenuSchemas
+- Sub Map: api_layer
+- Type: api_schema
+- State: `planned`
+- Source: api/schemas/line_rich_menus.py
+- Description: LINE 下方選單發布與重試操作的輸入資料模型。
+- Dependencies: []
+- Complexity: low
+- Observability: not_required
+
+##### Module: LineTaskSchemas
+- Sub Map: api_layer
+- Type: api_schema
+- State: `planned`
+- Source: api/schemas/line_tasks.py
+- Description: LINE 發送任務取消、立即執行與重送操作的輸入資料模型。
+- Dependencies: []
+- Complexity: low
 - Observability: not_required

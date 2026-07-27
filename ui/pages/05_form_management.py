@@ -5,10 +5,9 @@
 ================================================================================
 """
 
+import os
+import requests
 import streamlit as st
-import importlib
-from services import db_service
-importlib.reload(db_service)
 
 from ui.pages.form_management.shared import (
     DB_TABLE_FIELDS,
@@ -59,10 +58,17 @@ def show():
                 return table_name
         return next(iter(form_db_table_fields))
 
+    base_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+
     try:
-        orders_data = db_service.get_order_details()
+        resp_orders = requests.get(f"{base_url}/api/v1/orders", timeout=10)
+        resp_orders.raise_for_status()
+        orders_payload = resp_orders.json()
+        orders_data = orders_payload.get("data") if isinstance(orders_payload, dict) and orders_payload.get("success") else []
+        if not isinstance(orders_data, list):
+            orders_data = []
     except Exception as e:
-        st.error(f"讀取資料庫失敗: {e}")
+        st.error(f"讀取訂單 API 失敗: {e}")
         orders_data = []
 
     global_stats = {
@@ -92,18 +98,23 @@ def show():
             target_order = next((o for o in orders_data if o['case_no'] == target_case_no), None)
             if target_order:
                 try:
-                    client_rows = db_service.get_table_data('clients')
-                    client_row = next((row for row in client_rows if row.get('case_no') == target_case_no), None)
-                    if client_row:
-                        target_order = {
-                            **target_order,
-                            **{
-                                key: client_row.get(key, '')
-                                for key in ('service_time', 'service_type', 'delivery_type', 'residence_type', 'city', 'identity_status')
-                            },
-                        }
+                    resp_clients = requests.get(f"{base_url}/api/v1/clients", timeout=10)
+                    resp_clients.raise_for_status()
+                    clients_payload = resp_clients.json()
+                    client_rows = clients_payload.get("data") if isinstance(clients_payload, dict) and clients_payload.get("success") else []
+                    if isinstance(client_rows, list):
+                        client_row = next((row for row in client_rows if row.get('case_no') == target_case_no), None)
+                        if client_row:
+                            target_order = {
+                                **target_order,
+                                **{
+                                    key: client_row.get(key, '')
+                                    for key in ('service_time', 'service_type', 'delivery_type', 'residence_type', 'city', 'identity_status')
+                                },
+                            }
                 except Exception:
                     pass
+
         else:
             st.info("💡 目前切換為「全域/多案件統計模式」，無須鎖定單一訂單。")
 
