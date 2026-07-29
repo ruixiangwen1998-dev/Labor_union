@@ -81,3 +81,59 @@
 - `line/static/staff_verification.html`：共用 LIFF 登入失效時顯示錯誤，不再使用未登記的目前網址呼叫 `liff.login()`。
 - 新增共用 Gateway、專用 LIFF 相容性及前端導向防退化測試；相關測試 38 項通過。
 - `.env.example` 將舊名稱 `LINE_LOGIN_ID` 統一為後端實際驗證 ID Token 使用的 `LINE_LOGIN_CHANNEL_ID`。
+
+---
+
+## 新增 LINE 主動式健康監控
+
+### 新增
+
+- `line/monitor.py`：與 FastAPI 分離的持續監控程序。
+- `services/line_health_checks.py`：API、DB、Worker、任務、LINE、公開入口、LIFF、設定與磁碟檢查。
+- `services/line_monitor_service.py`：檢查排程、狀態防抖、心跳、DB／快照保存及異常恢復事件。
+- `api/routes/line_monitoring.py`、`api/schemas/line_monitoring.py`：受保護的監控狀態及事件 API。
+- `ui/components/line_health_monitor.py`：管理中心細分健康狀態、檢查時間與異常紀錄。
+- `config/line_monitoring.json`：檢查間隔與門檻。
+- `db/schema_parts/97_line_active_monitoring.sql`：可重跑監控 migration。
+- `tests/test_line_monitoring.py`：心跳、防抖、恢復、API 權限及獨立程序測試。
+
+### 修改
+
+- `line/worker.py` 每 15 秒更新 Worker 心跳。
+- `db/schema.sql` 新增心跳與目前健康狀態，擴充既有異常事件。
+- LINE 管理中心改讀持續監控結果，不再因打開頁面才執行健康檢查。
+- `start_fastapi_ngrok.py` 與 `online.bat` 加入獨立 Monitor 啟動與程序監視。
+- DB 故障時使用被 Git 忽略的 `.monitor_state` 快照保留診斷狀態。
+
+### 驗證
+
+- migration 已套用開發 DB，未清空既有資料。
+- 33 項監控與 LINE 核心回歸測試通過；完整套件 808 項通過，另有 4 項未修改頁面的 Streamlit 測試因既有 3 秒時限逾時。
+- 本次只建立異常事件，尚未發送 LINE 警報。
+
+---
+
+## 開發服務自動重啟與同層雙向監督
+
+### 新增
+
+- `services/runtime_supervision_service.py`：提供同層程序單例鎖、安全 PID 驗證、終止與獨立重啟能力。
+- Monitor 新增開發監督器心跳檢查；監督器每 15 秒更新 `service_heartbeats`。
+- `system_alerts` 新增 `service_supervisor` 事件生命週期，記錄服務中斷、重啟與恢復。
+
+### 修改
+
+- `start.bat` 直接啟動 Monitor 與服務監督器兩個同層程序，刪除外層 `run_development_supervisor.bat`。
+- `start_fastapi_ngrok.py` 管理 FastAPI、ngrok、Streamlit，並在 Monitor 失聯時重啟它。
+- `line/monitor.py` 在服務監督器失聯時，依心跳 PID 安全清理其三項服務並重啟監督器。
+- 兩程序加入單例鎖與正常停機標記，避免重複程序、重啟風暴及人工關閉後被強制拉起。
+- 服務失敗只重啟故障項目，依 1、3、10 秒最多重試三次；仍失敗時才依開關顯示彈窗或終端提示。
+- `start.bat` 改為只啟動單一開發監督器，不再重複開啟 Streamlit。
+- `config/line_monitoring.json` 新增開發監督器檢查門檻；`config/README_CONFIG.md` 與 `.env.example` 補上分工及開關說明。
+- Windows 批次檔統一使用 UTF-8、CRLF。
+
+### 驗證
+
+- 監控測試 9 項通過；LINE 管理、任務、LIFF、審查與啟動回歸共 60 項通過。
+- 完整測試 812 項通過；另 4 項既有 Streamlit AppTest 固定 3 秒逾時，與本次服務監督修改無關且和前次結果相同。
+- 未建立或遺留一次性 Python 檔案。

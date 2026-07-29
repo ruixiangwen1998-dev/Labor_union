@@ -15,6 +15,7 @@ from ui.components.line_review_manager import render_review_manager
 from ui.components.line_rich_menu_manager import render_rich_menu_manager
 from ui.components.line_schedule_manager import render_schedule_manager
 from ui.components.line_task_manager import render_task_manager
+from ui.components.line_health_monitor import render_line_health_monitor
 from ui.api_clients.line_api_client import LineAdminApiClient, LineAdminApiError
 
 
@@ -61,6 +62,8 @@ def _overview(
     try:
         health = client.health(token)
         capabilities = client.capabilities(token)
+        monitoring = client.monitoring_status(token)
+        monitoring_events = client.monitoring_events(token, limit=50)
     except LineAdminApiError as exc:
         if exc.status_code == 401:
             _clear_session()
@@ -69,19 +72,7 @@ def _overview(
         st.error(str(exc))
         return
 
-    status_value = health.get("status", "unknown")
-    worker_running = health.get("worker", {}).get("running", False)
-    database_ok = health.get("database", {}).get("ok", False)
-    col1, col2, col3 = st.columns(3)
-    system_ok = status_value in {"ok", "healthy"} and database_ok
-    col1.metric("整體狀態", "可正常使用" if system_ok else "需要檢查")
-    col2.metric("自動發送", "正常運作" if worker_running else "目前暫停")
-    col3.metric("資料連線", "正常" if database_ok else "異常")
-
-    if system_ok and worker_running:
-        st.success("LINE 管理功能與自動發送服務目前運作正常。")
-    else:
-        st.warning("部分服務未正常運作，請通知系統管理員協助處理。")
+    render_line_health_monitor(monitoring, monitoring_events)
 
     if profile.get("role") == "system_admin":
         with st.expander("系統管理資訊"):

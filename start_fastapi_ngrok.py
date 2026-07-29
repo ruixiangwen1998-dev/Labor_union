@@ -11,11 +11,25 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Callable
 
 import requests
 from dotenv import load_dotenv
+
+from services.line_monitor_service import get_latest_service_heartbeat
+from services.runtime_supervision_service import (
+    SingleInstanceLock,
+    clear_intentional_shutdown,
+    heartbeat_pid,
+    intentional_shutdown_requested,
+    mark_intentional_shutdown,
+    spawn_independent,
+    terminate_registered_process,
+)
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -24,6 +38,10 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+MONITOR_SNAPSHOT_PATH = PROJECT_ROOT / ".monitor_state" / "line_health.json"
+SERVICE_CHECK_INTERVAL_SECONDS = 2.0
+SERVICE_HEALTH_FAILURE_THRESHOLD = 3
+SERVICE_RESTART_DELAYS_SECONDS = (1, 3, 10)
 os.chdir(PROJECT_ROOT)
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -84,6 +102,33 @@ def run_fastapi() -> subprocess.Popen[bytes]:
     )
 
 
+def run_monitor() -> subprocess.Popen[bytes]:
+    """Restart Monitor as a peer process in its own console/process group."""
+    return spawn_independent(
+        [sys.executable, "-m", "line.monitor"],
+        cwd=PROJECT_ROOT,
+    )
+
+
+def run_streamlit() -> subprocess.Popen[bytes]:
+    """Start the Streamlit management UI under the same supervisor."""
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            "ui/app.py",
+            "--server.address",
+            "127.0.0.1",
+            "--server.port",
+            "8501",
+        ],
+        cwd=PROJECT_ROOT,
+        shell=False,
+    )
+
+
 def _relay_output(process: subprocess.Popen[str], prefix: str) -> None:
     if process.stdout is None:
         return
@@ -112,23 +157,6 @@ def _terminate_process_tree(process: subprocess.Popen, service_name: str) -> Non
             process.kill()
 
 
-def _wait_for_tunnel(ngrok_process: subprocess.Popen, timeout_seconds: int = 15) -> str | None:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        if ngrok_process.poll() is not None:
-            return None
-        try:
-            response = requests.get("http://127.0.0.1:4040/api/tunnels", timeout=1)
-            response.raise_for_status()
-            for tunnel in response.json().get("tunnels", []):
-                if tunnel.get("proto") == "https":
-                    return tunnel.get("public_url")
-        except requests.RequestException:
-            pass
-        time.sleep(0.5)
-    return None
-
-
 def _print_urls(public_url: str) -> None:
     print("✨" * 25)
     print("🎉 啟動成功！請將以下完整網址設定到 LINE Developers：")
@@ -136,12 +164,223 @@ def _print_urls(public_url: str) -> None:
     print("\n🎉 LIFF 測試表單網址：")
     print(f"👉 LIFF 網址: {public_url}/api/static/register.html")
     print("✨" * 25)
-    print("\n💡 FastAPI 或 ngrok 任一方停止時，另一方也會自動關閉。")
-    print("💡 按 Ctrl+C 可正常關閉兩個服務。")
+    print("\n💡 FastAPI、ngrok 與 Streamlit 由服務監督器管理。")
+    print("💡 LINE Monitor 是同層獨立程序，兩邊透過心跳互相監控與恢復。")
+    print("💡 任一服務異常時會個別嘗試重啟，連續三次失敗後才要求人工處理。")
+    print("💡 在本視窗按 Ctrl+C 只會正常關閉 FastAPI、ngrok 與 Streamlit；Monitor 為獨立視窗。")
 
 
 class ServiceFailure(RuntimeError):
     """A supervised service stopped or failed to become ready."""
+
+
+@dataclass
+class ManagedService:
+    """Runtime state for one child process managed by the dev supervisor."""
+
+    name: str
+    display_name: str
+    starter: Callable[[], subprocess.Popen]
+    ready_timeout_seconds: int
+    process: subprocess.Popen | None = None
+    started_at: float = 0.0
+    consecutive_health_failures: int = 0
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+def _service_process_status(service: ManagedService) -> tuple[bool, str]:
+    if service.process is None:
+        return False, "程序尚未啟動"
+    exit_code = service.process.poll()
+    if exit_code is not None:
+        return False, f"程序已停止（Exit Code: {exit_code}）"
+    return True, "程序執行中"
+
+
+def _request_health(url: str, expected_text: str | None = None) -> tuple[bool, str]:
+    try:
+        response = requests.get(url, timeout=3)
+        response.raise_for_status()
+        if expected_text is not None and expected_text not in response.text:
+            return False, f"{url} 回應內容不符合預期"
+        return True, f"HTTP {response.status_code}"
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
+def _ngrok_health(service: ManagedService) -> tuple[bool, str]:
+    running, message = _service_process_status(service)
+    if not running:
+        return running, message
+    try:
+        response = requests.get("http://127.0.0.1:4040/api/tunnels", timeout=3)
+        response.raise_for_status()
+        for tunnel in response.json().get("tunnels", []):
+            public_url = str(tunnel.get("public_url") or "")
+            if tunnel.get("proto") == "https" and public_url.startswith("https://"):
+                service.metadata["public_url"] = public_url.rstrip("/")
+                return True, f"Tunnel 已建立：{public_url}"
+        return False, "ngrok 程序仍在，但沒有可用的 HTTPS Tunnel"
+    except (requests.RequestException, ValueError) as exc:
+        return False, f"無法讀取 ngrok Tunnel：{exc}"
+
+
+def _fastapi_health(service: ManagedService) -> tuple[bool, str]:
+    running, message = _service_process_status(service)
+    return (running, message) if not running else _request_health("http://127.0.0.1:8000/health")
+
+
+def _streamlit_health(service: ManagedService) -> tuple[bool, str]:
+    running, message = _service_process_status(service)
+    return (
+        (running, message)
+        if not running
+        else _request_health("http://127.0.0.1:8501/_stcore/health", "ok")
+    )
+
+
+def _monitor_health(service: ManagedService) -> tuple[bool, str]:
+    if intentional_shutdown_requested("line_monitor"):
+        return True, "Monitor 已由開發者正常關閉，不執行自動重啟"
+    if service.process is not None:
+        running, message = _service_process_status(service)
+        if not running:
+            return running, message
+    try:
+        modified_at = MONITOR_SNAPSHOT_PATH.stat().st_mtime
+        if modified_at < service.started_at - 1:
+            return False, "Monitor 已啟動，但尚未產生本次程序的健康快照"
+        snapshot = json.loads(MONITOR_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        generated_at = datetime.fromisoformat(str(snapshot["generated_at"]).replace("Z", "+00:00"))
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - generated_at).total_seconds()
+        if age_seconds > 60:
+            return False, f"Monitor 程序仍在，但健康快照已停止更新 {int(age_seconds)} 秒"
+        return True, f"健康快照於 {int(max(0, age_seconds))} 秒前更新"
+    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError, OSError) as exc:
+        return False, f"Monitor 健康快照無法讀取：{exc}"
+
+
+SERVICE_HEALTH_CHECKS: dict[str, Callable[[ManagedService], tuple[bool, str]]] = {
+    "ngrok": _ngrok_health,
+    "fastapi": _fastapi_health,
+    "streamlit": _streamlit_health,
+    "monitor": _monitor_health,
+}
+
+
+def _record_supervisor_event(
+    service: ManagedService,
+    state: str,
+    description: str,
+    *,
+    attempt: int | None = None,
+    severity: str = "warning",
+) -> None:
+    """Save a supervisor transition without allowing DB trouble to block recovery."""
+    try:
+        from services.line_monitor_service import record_supervisor_event
+
+        details = {"pid": service.process.pid if service.process else None}
+        if attempt is not None:
+            details["restart_attempt"] = attempt
+        record_supervisor_event(
+            service.display_name,
+            state,
+            description,
+            severity=severity,
+            details=details,
+        )
+    except Exception as exc:
+        print(f"[SUPERVISOR] 無法將 {service.display_name} 事件寫入 DB：{exc}")
+
+
+def _start_service(service: ManagedService) -> None:
+    service.process = service.starter()
+    service.started_at = time.time()
+    service.consecutive_health_failures = 0
+    print(f"▶ {service.display_name} 已啟動（PID: {service.process.pid}）")
+    if service.name == "ngrok":
+        threading.Thread(
+            target=_relay_output,
+            args=(service.process, "ngrok"),
+            daemon=True,
+        ).start()
+
+
+def _wait_until_service_ready(service: ManagedService) -> tuple[bool, str]:
+    deadline = time.monotonic() + service.ready_timeout_seconds
+    last_message = "尚未執行健康檢查"
+    while time.monotonic() < deadline:
+        healthy, last_message = SERVICE_HEALTH_CHECKS[service.name](service)
+        if healthy:
+            return True, last_message
+        if service.process is not None and service.process.poll() is not None:
+            return False, last_message
+        time.sleep(0.5)
+    return False, last_message
+
+
+def _restart_service(service: ManagedService, reason: str) -> None:
+    """Restart only the failed service; escalate after three unsuccessful tries."""
+    _record_supervisor_event(service, "unavailable", reason)
+    last_error = reason
+    for attempt, delay_seconds in enumerate(SERVICE_RESTART_DELAYS_SECONDS, start=1):
+        if service.process is not None:
+            _terminate_process_tree(service.process, service.display_name)
+        print(
+            f"[RESTART] {service.display_name} 將於 {delay_seconds} 秒後進行"
+            f"第 {attempt}/3 次自動重啟。"
+        )
+        time.sleep(delay_seconds)
+        try:
+            _start_service(service)
+            ready, ready_message = _wait_until_service_ready(service)
+        except Exception as exc:
+            ready, ready_message = False, str(exc)
+        if ready:
+            service.consecutive_health_failures = 0
+            _record_supervisor_event(
+                service,
+                "recovered",
+                f"{service.display_name} 已於第 {attempt} 次自動重啟後恢復。",
+                attempt=attempt,
+            )
+            print(f"[RECOVERED] {service.display_name} 已恢復：{ready_message}")
+            return
+        last_error = ready_message
+        _record_supervisor_event(
+            service,
+            "restart_failed",
+            f"{service.display_name} 第 {attempt} 次自動重啟失敗：{ready_message}",
+            attempt=attempt,
+            severity="critical" if attempt == 3 else "warning",
+        )
+    raise ServiceFailure(
+        f"{service.display_name} 連續三次自動重啟仍無法恢復。\n最後原因：{last_error}"
+    )
+
+
+def _restart_monitor_peer(service: ManagedService, reason: str) -> None:
+    """Stop the heartbeat-registered Monitor and relaunch one independent peer."""
+    try:
+        heartbeat = get_latest_service_heartbeat("line_monitor")
+    except Exception as exc:
+        heartbeat = None
+        print(f"[SUPERVISOR] 無法取得 Monitor PID：{exc}")
+    pid = heartbeat_pid(heartbeat)
+    stopped, stop_message = terminate_registered_process(
+        pid,
+        expected_fragments=("-m", "line.monitor"),
+        include_children=False,
+    )
+    print(f"[SUPERVISOR] Monitor 舊程序處理結果：{stop_message}")
+    if not stopped and pid:
+        print("[SUPERVISOR] 將由 Monitor 單例鎖阻止重複程序。")
+    clear_intentional_shutdown("line_monitor")
+    service.process = None
+    _restart_service(service, reason)
 
 
 class DevLineConsoleReviewer:
@@ -350,7 +589,7 @@ def _ask_console_restart(message: str) -> bool:
     """Ask an interactive developer terminal whether both services should restart."""
     print("\n" + "=" * 60)
     print(f"[SERVER ERROR] {message}")
-    print("ngrok 與 FastAPI 已自動關閉。")
+    print("ngrok、FastAPI 與 Streamlit 已安全關閉；獨立 Monitor 仍持續運作。")
     print("=" * 60)
 
     if not sys.stdin or not sys.stdin.isatty():
@@ -359,7 +598,7 @@ def _ask_console_restart(message: str) -> bool:
 
     while True:
         try:
-            answer = input("是否要重新啟動 ngrok & FastAPI？(y/n): ").strip().lower()
+            answer = input("是否要重新啟動全部開發服務？(y/n): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\n[EXIT] 已取消重新啟動。")
             return False
@@ -451,74 +690,145 @@ def _ask_restart(message: str) -> bool:
         return retry == 4
 
 
+def _record_supervisor_heartbeat(services: dict[str, ManagedService]) -> None:
+    try:
+        from services.line_monitor_service import record_service_heartbeat
+
+        record_service_heartbeat(
+            "development_supervisor",
+            f"{os.environ.get('COMPUTERNAME', 'local')}:{os.getpid()}",
+            details={
+                "pid": os.getpid(),
+                "managed_services": {
+                    name: item.process.pid if item.process and item.process.poll() is None else None
+                    for name, item in services.items()
+                }
+            },
+        )
+    except Exception as exc:
+        print(f"[SUPERVISOR] 無法更新監督器心跳：{exc}")
+
+
 def _run_supervised_session() -> None:
     print("=" * 60)
-    print("🚀 正在啟動 LINE Bot 開發環境（FastAPI + ngrok）...")
+    print("🚀 正在啟動服務監督器（FastAPI + ngrok + Streamlit）...")
     print("=" * 60)
 
-    ngrok_process: subprocess.Popen | None = None
-    fastapi_process: subprocess.Popen | None = None
+    os.environ["ENABLE_DEVELOPMENT_SUPERVISOR_CHECK"] = "true"
+    services = {
+        "ngrok": ManagedService("ngrok", "ngrok", run_ngrok, 20),
+        "fastapi": ManagedService("fastapi", "FastAPI", run_fastapi, 30),
+        "streamlit": ManagedService("streamlit", "Streamlit", run_streamlit, 40),
+    }
+    monitor_peer = ManagedService("monitor", "LINE 主動監控", run_monitor, 75)
     line_reviewer = DevLineConsoleReviewer()
     review_notifier = DevReviewNotificationServer(line_reviewer)
+    active_public_url = ""
 
     try:
         # Must start before FastAPI so the child process inherits the callback URL.
         review_notifier.start()
-        ngrok_process = run_ngrok()
-        print(f"▶ ngrok 已啟動（PID: {ngrok_process.pid}，對應 Port: 8000）")
-        threading.Thread(
-            target=_relay_output,
-            args=(ngrok_process, "ngrok"),
-            daemon=True,
-        ).start()
-
-        fastapi_process = run_fastapi()
-        print(f"▶ FastAPI 已啟動（PID: {fastapi_process.pid}）")
-        print("⏳ 正在等待 ngrok Tunnel 就緒...")
-
-        public_url = _wait_for_tunnel(ngrok_process)
-        if not public_url:
-            exit_code = ngrok_process.poll()
-            if exit_code is not None:
-                raise ServiceFailure(f"ngrok 啟動失敗或已停止。\nExit Code：{exit_code}")
+        for service_name in ("ngrok", "fastapi", "streamlit"):
+            service = services[service_name]
+            try:
+                _start_service(service)
+                ready, message = _wait_until_service_ready(service)
+            except Exception as exc:
+                ready, message = False, str(exc)
+            if not ready:
+                print(f"[WARNING] {service.display_name} 首次啟動未就緒：{message}")
+                _restart_service(service, f"首次啟動未就緒：{message}")
             else:
-                raise ServiceFailure("ngrok 在 15 秒內未建立 Tunnel。\n請查看終端的 [ngrok] 日誌。")
+                print(f"[READY] {service.display_name}：{message}")
 
-        _print_urls(public_url)
+            if service_name == "ngrok":
+                active_public_url = service.metadata.get("public_url", "")
+                if not active_public_url:
+                    raise ServiceFailure("ngrok 已啟動，但無法取得公開 HTTPS 網址。")
+                # Children launched afterwards inherit the currently active dev URL.
+                os.environ["BASE_URL"] = active_public_url
+
+        monitor_ready, monitor_message = _wait_until_service_ready(monitor_peer)
+        if not monitor_ready:
+            print(f"[WARNING] LINE 主動監控尚未就緒：{monitor_message}")
+            _restart_monitor_peer(monitor_peer, monitor_message)
+        else:
+            print(f"[READY] LINE 主動監控：{monitor_message}")
+
+        _print_urls(active_public_url)
         # Recover requests left pending before this development session once only.
         line_reviewer.recover_pending_once()
+        last_heartbeat_at = 0.0
 
         while True:
-            ngrok_code = ngrok_process.poll()
-            fastapi_code = fastapi_process.poll()
-            if ngrok_code is not None:
-                print(f"\n[ERROR] ngrok 已停止，Exit Code: {ngrok_code}")
-                print("[INFO] FastAPI 將一併關閉，避免留下無法接收 LINE Webhook 的服務。")
-                raise ServiceFailure(
-                    f"ngrok 已異常中斷。\nExit Code：{ngrok_code}\nFastAPI 已一併關閉。"
+            for service_name in ("ngrok", "fastapi", "streamlit"):
+                service = services[service_name]
+                healthy, message = SERVICE_HEALTH_CHECKS[service_name](service)
+                process_stopped = service.process is None or service.process.poll() is not None
+                if healthy:
+                    service.consecutive_health_failures = 0
+                    continue
+                service.consecutive_health_failures += 1
+                failure_count = service.consecutive_health_failures
+                print(
+                    f"[HEALTH] {service.display_name} 檢查失敗 "
+                    f"({failure_count}/{SERVICE_HEALTH_FAILURE_THRESHOLD})：{message}"
                 )
-            if fastapi_code is not None:
-                print(f"\n[ERROR] FastAPI 已停止，Exit Code: {fastapi_code}")
-                print("[INFO] ngrok 將一併關閉，避免留下無後端的公開 Tunnel。")
-                raise ServiceFailure(
-                    f"FastAPI 已異常中斷。\nExit Code：{fastapi_code}\nngrok 已一併關閉。"
+                if not process_stopped and failure_count < SERVICE_HEALTH_FAILURE_THRESHOLD:
+                    continue
+
+                previous_public_url = active_public_url
+                _restart_service(service, message)
+                if service_name == "ngrok":
+                    active_public_url = service.metadata.get("public_url", "")
+                    if active_public_url:
+                        os.environ["BASE_URL"] = active_public_url
+                        _print_urls(active_public_url)
+                    if active_public_url and active_public_url != previous_public_url:
+                        print(
+                            "[DEPENDENCY] ngrok 公開網址已變更，將重啟 FastAPI 與 Monitor "
+                            "以載入新的 BASE_URL。"
+                        )
+                        _restart_service(services["fastapi"], "ngrok 公開網址已變更")
+                        _restart_monitor_peer(monitor_peer, "ngrok 公開網址已變更")
+
+            monitor_healthy, monitor_message = _monitor_health(monitor_peer)
+            monitor_stopped = (
+                monitor_peer.process is not None and monitor_peer.process.poll() is not None
+            )
+            if monitor_healthy:
+                monitor_peer.consecutive_health_failures = 0
+            else:
+                monitor_peer.consecutive_health_failures += 1
+                failure_count = monitor_peer.consecutive_health_failures
+                print(
+                    "[HEALTH] LINE 主動監控檢查失敗 "
+                    f"({failure_count}/{SERVICE_HEALTH_FAILURE_THRESHOLD})：{monitor_message}"
                 )
+                if monitor_stopped or failure_count >= SERVICE_HEALTH_FAILURE_THRESHOLD:
+                    _restart_monitor_peer(monitor_peer, monitor_message)
+
             line_reviewer.tick()
-            time.sleep(0.5)
+            if time.monotonic() - last_heartbeat_at >= 15:
+                _record_supervisor_heartbeat(services)
+                last_heartbeat_at = time.monotonic()
+            time.sleep(SERVICE_CHECK_INTERVAL_SECONDS)
     finally:
         review_notifier.stop()
-        if fastapi_process is not None:
-            _terminate_process_tree(fastapi_process, "FastAPI")
-        if ngrok_process is not None:
-            _terminate_process_tree(ngrok_process, "ngrok")
+        for service_name in ("streamlit", "fastapi", "ngrok"):
+            service = services[service_name]
+            if service.process is not None:
+                _terminate_process_tree(service.process, service.display_name)
 
 
-def main() -> int:
+def _main_loop() -> int:
     while True:
         try:
             _run_supervised_session()
+            return 0
         except KeyboardInterrupt:
             print("\n[STOP] 收到 Ctrl+C，LINE Bot 開發環境已正常關閉。")
+            mark_intentional_shutdown("development_supervisor")
             return 0
         except (ServiceFailure, FileNotFoundError) as exc:
             message = str(exc)
@@ -528,12 +838,25 @@ def main() -> int:
             print(f"[ERROR] {message}")
 
         if _ask_restart(message):
-            print("[RESTART] 使用者選擇重新啟動，1 秒後重新建立 FastAPI 與 ngrok...")
+            print("[RESTART] 使用者選擇重新啟動，1 秒後重新建立全部開發服務...")
             time.sleep(1)
             continue
 
         print("[EXIT] 使用者選擇關閉，請於需要時手動重新啟動。")
-        return 1
+        mark_intentional_shutdown("development_supervisor")
+        return 0
+
+
+def main() -> int:
+    singleton = SingleInstanceLock("development_supervisor")
+    if not singleton.acquire():
+        print("[SUPERVISOR] 已有一個服務監督器正在執行，本次不重複啟動。")
+        return 0
+    clear_intentional_shutdown("development_supervisor")
+    try:
+        return _main_loop()
+    finally:
+        singleton.release()
 
 
 if __name__ == "__main__":

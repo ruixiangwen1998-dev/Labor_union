@@ -134,6 +134,17 @@ class LineAdminApiClient:
     def capabilities(self, token: str | None) -> dict[str, Any]:
         return self._request("GET", "/api/v1/line/admin/capabilities", token=token)
 
+    def monitoring_status(self, token: str | None) -> dict[str, Any]:
+        return self._request("GET", "/api/v1/line/monitoring/status", token=token)
+
+    def monitoring_events(self, token: str | None, *, limit: int = 50) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            "/api/v1/line/monitoring/events",
+            token=token,
+            params={"limit": limit},
+        )
+
     def message_template_state(self, token: str | None) -> dict[str, Any]:
         return self._request("GET", "/api/config/message-templates/state", token=token)
 

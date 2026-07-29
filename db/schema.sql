@@ -795,10 +795,49 @@ CREATE TABLE IF NOT EXISTS system_alerts (
     event_type VARCHAR(50) NOT NULL COMMENT '異常事件類型',
     description TEXT NOT NULL COMMENT '詳細異常描述',
     status ENUM('pending', 'resolved') DEFAULT 'pending' COMMENT '處理狀態 (pending:待處理/resolved:已排除)',
+    component VARCHAR(100) NULL COMMENT '異常所屬服務元件',
+    severity ENUM('warning','critical') NOT NULL DEFAULT 'warning',
+    fingerprint VARCHAR(191) NULL COMMENT '相同異常的穩定識別碼，用於避免重複事件',
+    first_detected_at DATETIME NULL,
+    last_detected_at DATETIME NULL,
+    occurrence_count INT NOT NULL DEFAULT 1,
+    details_json JSON NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     resolved_at TIMESTAMP NULL COMMENT '排除時間',
     resolved_by VARCHAR(50) NULL COMMENT '處理人員',
-    INDEX idx_alert_status (status)
+    INDEX idx_alert_status (status),
+    INDEX idx_alert_component_status (component, status, last_detected_at),
+    INDEX idx_alert_fingerprint_status (fingerprint, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 35-1. 各程序定期更新的服務心跳
+CREATE TABLE IF NOT EXISTS service_heartbeats (
+    service_name VARCHAR(100) NOT NULL,
+    instance_id VARCHAR(191) NOT NULL,
+    status ENUM('healthy','warning','critical','maintenance') NOT NULL DEFAULT 'healthy',
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    details_json JSON NULL,
+    PRIMARY KEY (service_name, instance_id),
+    INDEX idx_service_heartbeat_seen (service_name, last_seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 35-2. 主動監控各檢查項目的最新狀態
+CREATE TABLE IF NOT EXISTS system_health_status (
+    check_name VARCHAR(100) PRIMARY KEY,
+    component VARCHAR(100) NOT NULL,
+    status ENUM('healthy','warning','critical','unknown','maintenance') NOT NULL DEFAULT 'unknown',
+    raw_status ENUM('healthy','warning','critical','unknown','maintenance') NOT NULL DEFAULT 'unknown',
+    message VARCHAR(500) NOT NULL,
+    response_ms INT NULL,
+    consecutive_failures INT NOT NULL DEFAULT 0,
+    consecutive_successes INT NOT NULL DEFAULT 0,
+    last_checked_at DATETIME NOT NULL,
+    last_success_at DATETIME NULL,
+    status_changed_at DATETIME NOT NULL,
+    details_json JSON NULL,
+    INDEX idx_health_component_status (component, status),
+    INDEX idx_health_checked (last_checked_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 36. LINE 任務每次執行嘗試紀錄

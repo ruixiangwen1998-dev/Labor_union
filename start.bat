@@ -122,16 +122,20 @@ echo ==========================================
 echo Initialization and import completed successfully!
 echo ==========================================
 
-:: 11. Launch servers concurrently
-echo [Step 11] Launching FastAPI server and ngrok...
-start "FastAPI & ngrok" cmd /k ""%PY%" start_fastapi_ngrok.py"
+:: 11. Launch Monitor and the service supervisor as sibling processes.
+::     They exchange DB heartbeats and can restart one another without a wrapper chain.
+set ENABLE_DEVELOPMENT_SUPERVISOR_CHECK=true
+echo [Step 11] Launching independent LINE Monitor...
+start "LINE Active Monitor" cmd /k ""%PY%" -m line.monitor"
 
-echo [Step 12] Launching Streamlit interface...
-start "Streamlit Client UI" cmd /k ""%PY%" -m streamlit run ui/app.py"
+echo [Step 12] Launching supervised FastAPI, ngrok and Streamlit...
+start "Development Service Supervisor" cmd /k ""%PY%" start_fastapi_ngrok.py"
 
 echo ==========================================
 echo System is running in the background!
 echo - API Docs: http://127.0.0.1:8000/docs
 echo - Streamlit UI: http://localhost:8501
+echo - Supervisor: FastAPI, ngrok and Streamlit
+echo - Monitor: detailed checks and supervisor recovery
 echo ==========================================
 pause

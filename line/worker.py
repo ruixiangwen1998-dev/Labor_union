@@ -18,6 +18,7 @@ import pymysql
 import requests
 
 from services.db_service import get_connection as get_db_connection
+from services.line_monitor_service import monitor_instance_id, record_service_heartbeat
 from services.line_rich_menu_service import (
     import_legacy_rich_menu_ids,
     next_publication_run_at,
@@ -28,6 +29,8 @@ from services.line_rich_menu_service import (
 
 _wakeup_event = asyncio.Event()
 _worker_task: asyncio.Task[None] | None = None
+_worker_instance_id = monitor_instance_id()
+_last_worker_cycle_at: datetime | None = None
 RETRYABLE_HTTP = {408, 425, 429, 500, 502, 503, 504}
 
 
@@ -316,6 +319,7 @@ async def process_due_tasks() -> None:
 
 
 async def worker_loop() -> None:
+    global _last_worker_cycle_at
     print("[LINE Worker] Reliable worker started")
     imported = await asyncio.to_thread(import_legacy_rich_menu_ids)
     if imported:
@@ -324,6 +328,7 @@ async def worker_loop() -> None:
     await asyncio.to_thread(recover_stale_publications)
     while True:
         try:
+            _last_worker_cycle_at = _utc_now_naive()
             await process_due_tasks()
             await asyncio.to_thread(process_due_publications)
             _wakeup_event.clear()
@@ -337,8 +342,8 @@ async def worker_loop() -> None:
                 continue
             # Notification is primary; a low-frequency scan recovers a task if
             # its wake-up signal was lost while a process was restarting.
-            timeout = 60.0 if next_at is None else min(
-                60.0,
+            timeout = 15.0 if next_at is None else min(
+                15.0,
                 max(0.0, (next_at - _utc_now_naive()).total_seconds()),
             )
             try:
@@ -352,9 +357,44 @@ async def worker_loop() -> None:
             await asyncio.sleep(5)
 
 
+async def _worker_heartbeat_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(
+                record_service_heartbeat,
+                "line_worker",
+                _worker_instance_id,
+                details={
+                    "task_running": True,
+                    "last_cycle_at": _last_worker_cycle_at.isoformat()
+                    if _last_worker_cycle_at
+                    else None,
+                },
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[LINE Worker] Heartbeat update failed: {exc}")
+        await asyncio.sleep(15)
+
+
+async def _worker_service() -> None:
+    heartbeat_task = asyncio.create_task(
+        _worker_heartbeat_loop(), name="line-worker-heartbeat"
+    )
+    try:
+        await worker_loop()
+    finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+
+
 def start_worker() -> asyncio.Task[None]:
     global _worker_task
-    _worker_task = asyncio.create_task(worker_loop(), name="line-task-worker")
+    _worker_task = asyncio.create_task(_worker_service(), name="line-task-worker")
     return _worker_task
 
 

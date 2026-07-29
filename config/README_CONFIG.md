@@ -254,3 +254,32 @@ POST /api/v1/line/review-requests/{request_id}/reject
 ```
 
 清單與詳細資料至少需要 `line_agent`；核准／拒絕需要 `line_manager`。兩組接口最後都呼叫 `services/line_review_service.py`，因此交易鎖、資料衝突檢查、LINE 任務與狀態結果一致。`LINE_REVIEW_STALE_HOURS` 只控制管理頁逾時提醒門檻，不會自動拒絕或核准申請。
+
+## LINE 主動健康監控
+
+`config/line_monitoring.json` 管理檢查間隔、連續失敗／恢復門檻及各項警戒值，不保存金鑰。獨立程序執行：
+
+```bash
+python -m line.monitor
+```
+
+開發環境由 `start.bat` 將 `line.monitor` 與 `start_fastapi_ngrok.py` 啟動成兩個同層獨立程序，不使用逐層包覆的 watchdog 批次檔。兩者都有作業系統單例鎖，重複執行 `start.bat` 時不會建立第二套 Monitor 或服務監督器。
+
+`start_fastapi_ngrok.py` 管理 FastAPI、ngrok 與 Streamlit，檢查程序退出、FastAPI health、Streamlit health、ngrok HTTPS Tunnel；程序仍在但連續三次檢查失敗也視為卡住。單項服務依 1、3、10 秒最多自動重啟三次。它也會檢查 Monitor 的程序心跳與 `.monitor_state/line_health.json`，必要時驗證既有 PID 後重啟 Monitor。
+
+Monitor 持續檢查 FastAPI、MySQL、Worker 心跳、任務隊列、LINE API、公開入口、LIFF、JSON 設定與磁碟空間。服務監督器每 15 秒另寫入自身 PID、子服務 PID 與心跳；Monitor 經防抖判定其失聯後，會安全清理已登記的 FastAPI／ngrok／Streamlit 與舊監督器 PID，再以獨立程序重啟，最多三次。重啟前會核對 PID 的實際命令列，避免誤終止其他程序。
+
+開發者以 Ctrl+C 正常關閉其中一個程序時，會在 `.monitor_state` 留下正常停機標記，另一方不會把人工停機誤判為故障並強制重啟；下次人工啟動該程序時會自動清除自己的停機標記。
+
+正式環境目前仍由 `online.bat` 分別啟動服務，不能依賴開著的終端視窗提供高可用。正式部署應改由 Windows Service／Task Scheduler、Linux systemd 或容器平台 restart policy 管理程序；Monitor 負責偵測與紀錄，不取代作業系統層的服務管理。
+
+目前狀態寫入 `system_health_status`，Worker／Monitor 心跳寫入 `service_heartbeats`；異常與恢復事件使用擴充後的 `system_alerts`。若 MySQL 正在故障，狀態仍會以原子方式保存至被 Git 忽略的 `.monitor_state/line_health.json`，讓 FastAPI 可回報 DB 異常。
+
+管理查詢接口：
+
+```text
+GET /api/v1/line/monitoring/status
+GET /api/v1/line/monitoring/events
+```
+
+兩者都需要內部 API Key 與管理員權限。管理中心只讀取 Monitor 已保存的結果，不會因打開頁面才開始逐項檢查，也沒有固定前端輪詢。本階段只建立異常事件，不會傳送 LINE 警報；通知指定工會人員或群組屬於後續任務。

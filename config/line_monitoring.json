@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "monitor_interval_seconds": 15,
+  "failure_threshold": 3,
+  "recovery_threshold": 2,
+  "checks": {
+    "api": {"enabled": true, "interval_seconds": 30, "warning_response_ms": 1500},
+    "database": {"enabled": true, "interval_seconds": 30, "warning_response_ms": 1000},
+    "worker": {"enabled": true, "interval_seconds": 15, "stale_after_seconds": 45, "progress_stale_after_seconds": 90},
+    "development_supervisor": {"enabled": true, "interval_seconds": 15, "stale_after_seconds": 45},
+    "task_queue": {"enabled": true, "interval_seconds": 30, "overdue_minutes": 5, "stuck_minutes": 10, "failed_warning_count": 1},
+    "line_api": {"enabled": true, "interval_seconds": 300, "warning_response_ms": 2500},
+    "public_endpoint": {"enabled": true, "interval_seconds": 60, "warning_response_ms": 3000},
+    "liff": {"enabled": true, "interval_seconds": 300},
+    "config": {"enabled": true, "interval_seconds": 300},
+    "storage": {"enabled": true, "interval_seconds": 60, "warning_percent": 85, "critical_percent": 95}
+  }
+}

@@ -10,13 +10,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pymysql
 from fastapi import APIRouter, Depends
 
 from api.dependencies.admin_auth import require_line_viewer
 from api.schemas.base import BaseResponse
-from line.worker import worker_is_running
-from services.db_service import get_connection
+from services.line_monitor_service import get_monitoring_overview
 
 
 router = APIRouter(
@@ -32,37 +30,28 @@ def _configured(name: str) -> bool:
     return bool(value and not value.startswith("your_") and value != "mock_token")
 
 
-def _database_health() -> dict:
-    try:
-        conn = get_connection()
-        try:
-            with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-                cursor.execute("SELECT 1 AS ok")
-                database_ok = bool(cursor.fetchone()["ok"])
-                cursor.execute(
-                    """
-                    SELECT status, COUNT(*) AS total
-                    FROM line_tasks
-                    GROUP BY status
-                    """
-                )
-                task_counts = {row["status"]: int(row["total"]) for row in cursor.fetchall()}
-        finally:
-            conn.close()
-        return {"ok": database_ok, "line_task_counts": task_counts}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
-
-
 @router.get("/health", response_model=BaseResponse[dict])
 def line_admin_health():
-    database = _database_health()
-    status_text = "healthy" if database.get("ok") and worker_is_running() else "degraded"
+    monitoring = get_monitoring_overview()
+    checks = monitoring.get("checks", {})
+    database_check = checks.get("database", {})
+    worker_check = checks.get("worker", {})
+    database_status = database_check.get("status", "unknown")
+    database = {
+        "ok": database_status == "healthy",
+        "monitor_status": database_status,
+        "last_checked_at": database_check.get("checked_at"),
+        "details": database_check.get("details") or {},
+    }
+    worker_running = worker_check.get("status") in {"healthy", "warning"} and not monitoring.get("monitor_stale", True)
+    overall = monitoring.get("overall_status", "unknown")
+    status_text = "healthy" if overall == "healthy" else "degraded"
     return BaseResponse(
         data={
             "status": status_text,
             "database": database,
-            "worker": {"running": worker_is_running()},
+            "worker": {"running": worker_running},
+            "monitoring": monitoring,
             "line_credentials": {
                 "channel_secret": _configured("LINE_CHANNEL_SECRET"),
                 "channel_access_token": _configured("LINE_CHANNEL_ACCESS_TOKEN"),
