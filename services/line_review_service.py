@@ -53,6 +53,13 @@ def _mask_line_id(value: str | None) -> str:
     return f"{text[:4]}…{text[-4:]}"
 
 
+def _mask_identity_card(value: str | None) -> str:
+    text = (value or "").strip().upper()
+    if len(text) < 6:
+        return "-" if not text else "***"
+    return f"{text[:3]}{'*' * max(3, len(text) - 7)}{text[-4:]}"
+
+
 def _utc_naive(value: datetime | None) -> datetime | None:
     if value is None or value.tzinfo is None:
         return value
@@ -178,10 +185,11 @@ def list_line_reviews(
         keyword = f"%{search.strip()}%"
         clauses.append(
             "(CAST(r.id AS CHAR) LIKE %s OR r.client_name LIKE %s "
+            "OR r.submitted_name LIKE %s "
             "OR r.line_user_id LIKE %s OR r.old_line_user_id LIKE %s "
             "OR r.new_line_user_id LIKE %s)"
         )
-        params.extend([keyword] * 5)
+        params.extend([keyword] * 6)
     if created_from:
         clauses.append("r.created_at >= %s")
         params.append(_utc_naive(created_from))
@@ -206,6 +214,8 @@ def list_line_reviews(
                 f"""
                 SELECT r.id, r.request_type, r.status, r.client_id, r.client_name,
                        r.line_user_id, r.old_line_user_id, r.new_line_user_id,
+                       r.matched_staff_id, r.match_status, r.submitted_name,
+                       r.submitted_birthday, r.submitted_identity_last4, r.submitted_at,
                        r.decision_reason, r.created_at, r.reviewed_at, r.resolved_at,
                        a.display_name AS reviewer_display_name
                 FROM line_confirmation_requests r
@@ -223,7 +233,11 @@ def list_line_reviews(
             item["line_user_id_masked"] = _mask_line_id(item.pop("line_user_id", None))
             item["old_line_user_id_masked"] = _mask_line_id(item.pop("old_line_user_id", None))
             item["new_line_user_id_masked"] = _mask_line_id(item.pop("new_line_user_id", None))
-            item["display_name"] = item.get("client_name") or item["line_user_id_masked"]
+            item["display_name"] = (
+                item.get("submitted_name")
+                or item.get("client_name")
+                or item["line_user_id_masked"]
+            )
             items.append(item)
         return {
             "items": items,
@@ -244,12 +258,19 @@ def get_line_review(request_id: int) -> dict[str, Any]:
                 """
                 SELECT r.*, c.case_no,
                        c.line_user_id AS current_client_line_user_id,
+                       s.name AS matched_staff_name,
+                       s.phone AS matched_staff_phone,
+                       s.identity_card AS matched_staff_identity_card,
+                       s.birthday AS matched_staff_birthday,
+                       s.status AS matched_staff_status,
+                       s.line_user_id AS matched_staff_line_user_id,
                        lu.role AS current_line_role,
                        lu.status AS current_line_status,
                        a.username AS reviewer_username,
                        a.display_name AS reviewer_display_name
                 FROM line_confirmation_requests r
                 LEFT JOIN clients c ON c.id=r.client_id
+                LEFT JOIN staff s ON s.id=r.matched_staff_id
                 LEFT JOIN line_users lu ON lu.line_user_id=r.line_user_id
                 LEFT JOIN admin_users a ON a.id=r.reviewed_by_admin_user_id
                 WHERE r.id=%s
@@ -259,7 +280,11 @@ def get_line_review(request_id: int) -> dict[str, Any]:
             item = cursor.fetchone()
         if not item:
             raise LineReviewNotFoundError(f"找不到審查申請 #{request_id}")
-        return dict(item)
+        result = dict(item)
+        result["matched_staff_identity_masked"] = _mask_identity_card(
+            result.pop("matched_staff_identity_card", None)
+        )
+        return result
     finally:
         conn.close()
 
@@ -322,6 +347,30 @@ def approve_line_review(
                 line_user_id = str(item.get("line_user_id") or "").strip()
                 if not line_user_id:
                     raise LineReviewDataConflictError("月嫂身分申請缺少 LINE 使用者")
+                if item.get("match_status") != "matched" or not item.get("matched_staff_id"):
+                    raise LineReviewDataConflictError(
+                        "月嫂尚未完成 LIFF 資料比對，或未找到唯一的既有月嫂資料"
+                    )
+                cursor.execute(
+                    "SELECT id,name,line_user_id,status FROM staff WHERE id=%s FOR UPDATE",
+                    (item["matched_staff_id"],),
+                )
+                staff = cursor.fetchone()
+                if not staff:
+                    raise LineReviewDataConflictError("比對到的月嫂資料已不存在")
+                bound_line_user_id = str(staff.get("line_user_id") or "").strip()
+                if bound_line_user_id and bound_line_user_id != line_user_id:
+                    raise LineReviewDataConflictError("此月嫂資料已綁定其他 LINE 帳號")
+                cursor.execute(
+                    "SELECT id FROM staff WHERE line_user_id=%s AND id<>%s LIMIT 1 FOR UPDATE",
+                    (line_user_id, item["matched_staff_id"]),
+                )
+                if cursor.fetchone():
+                    raise LineReviewDataConflictError("此 LINE 帳號已綁定其他月嫂資料")
+                cursor.execute(
+                    "UPDATE staff SET line_user_id=%s WHERE id=%s",
+                    (line_user_id, item["matched_staff_id"]),
+                )
                 cursor.execute(
                     """
                     INSERT INTO line_users (line_user_id,role,status,last_event_at)

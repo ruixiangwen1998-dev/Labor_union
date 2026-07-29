@@ -159,7 +159,12 @@ def render_task_manager(
     st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
     nav1, nav2, nav3 = st.columns([1, 2, 1])
-    if nav1.button("上一頁", disabled=result["page"] <= 1, use_container_width=True):
+    if nav1.button(
+        "上一頁",
+        key="line_task_previous_page",
+        disabled=result["page"] <= 1,
+        use_container_width=True,
+    ):
         st.session_state[PAGE_KEY] = result["page"] - 1
         st.rerun()
     nav2.markdown(
@@ -167,7 +172,10 @@ def render_task_manager(
         unsafe_allow_html=True,
     )
     if nav3.button(
-        "下一頁", disabled=result["page"] >= result["total_pages"], use_container_width=True
+        "下一頁",
+        key="line_task_next_page",
+        disabled=result["page"] >= result["total_pages"],
+        use_container_width=True,
     ):
         st.session_state[PAGE_KEY] = result["page"] + 1
         st.rerun()

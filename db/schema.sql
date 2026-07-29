@@ -710,6 +710,15 @@ CREATE TABLE IF NOT EXISTS line_confirmation_requests (
     client_name VARCHAR(100) NULL,
     old_line_user_id VARCHAR(100) NULL,
     new_line_user_id VARCHAR(100) NULL,
+    matched_staff_id INT NULL COMMENT '月嫂資料比對成功後對應 staff.id；核准前不直接綁定',
+    match_status ENUM('not_submitted','matched','not_found','conflict','already_bound') NOT NULL DEFAULT 'not_submitted',
+    submitted_name VARCHAR(100) NULL COMMENT 'LIFF 驗證時填寫的姓名',
+    submitted_birthday DATE NULL COMMENT 'LIFF 驗證時填寫的生日',
+    submitted_identity_last4 VARCHAR(4) NULL COMMENT '僅保存身分證末四碼，不重複保存完整證號',
+    verification_token_hash CHAR(64) NULL COMMENT '一次性 LIFF 申請 Token 的 SHA-256 Hash',
+    verification_token_expires_at DATETIME NULL,
+    submission_attempts INT NOT NULL DEFAULT 0,
+    submitted_at DATETIME NULL,
     status ENUM('pending','approved','rejected','cancelled') NOT NULL DEFAULT 'pending',
     reviewed_by_admin_user_id BIGINT NULL COMMENT 'Web 管理中心處理者；開發終端處理時可為 NULL',
     reviewed_by_line_user_id VARCHAR(100) NULL,
@@ -722,7 +731,10 @@ CREATE TABLE IF NOT EXISTS line_confirmation_requests (
     INDEX idx_confirmation_status_time (status, created_at),
     INDEX idx_confirmation_admin_reviewer (reviewed_by_admin_user_id, reviewed_at),
     INDEX idx_confirmation_requester (line_user_id, request_type, status),
-    CONSTRAINT fk_confirmation_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT
+    UNIQUE KEY uk_confirmation_verification_token (verification_token_hash),
+    INDEX idx_confirmation_matched_staff (matched_staff_id, status),
+    CONSTRAINT fk_confirmation_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_confirmation_matched_staff FOREIGN KEY (matched_staff_id) REFERENCES staff(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 32. 管理後台帳號（LINE 管理中心與其他內部管理功能共用）

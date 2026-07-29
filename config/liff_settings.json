@@ -1,9 +1,9 @@
 {
   "version": 2,
   "theme": {
-    "primary_color": "#4A90E2",
+    "primary_color": "#11c5e1",
     "primary_hover_color": "#357ABD",
-    "background": "linear-gradient(135deg, #EEF2F7 0%, #D9E2EC 100%)",
+    "background": "#000000",
     "text_color": "#334E68",
     "muted_text_color": "#627D98",
     "font_family": "'Outfit', 'Noto Sans TC', sans-serif"

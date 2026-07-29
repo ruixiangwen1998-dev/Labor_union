@@ -168,6 +168,31 @@
         currentUserId = urlUserId;
     }
 
+    function getGatewayRequest() {
+        const direct = new URLSearchParams(window.location.search);
+        let target = direct.get('target') || '';
+        let token = direct.get('token') || '';
+        const state = direct.get('liff.state');
+        if (state) {
+            const stateUrl = new URL(state, window.location.origin);
+            target = stateUrl.searchParams.get('target') || target;
+            token = stateUrl.searchParams.get('token') || token;
+        }
+        return { target, token };
+    }
+
+    function redirectRequestedPage() {
+        const request = getGatewayRequest();
+        if (request.target !== 'staff-verification') return false;
+        if (!request.token) throw new Error('月嫂驗證連結缺少申請憑證');
+        const params = new URLSearchParams({
+            token: request.token,
+            viaLiff: '1'
+        });
+        window.location.replace(`/staff-verification-page?${params.toString()}`);
+        return true;
+    }
+
     async function initLiff() {
         try {
             const [lineResponse, runtimeResponse] = await Promise.all([
@@ -193,6 +218,8 @@
 
             const profile = await liff.getProfile();
             currentUserId = profile.userId;
+
+            if (redirectRequestedPage()) return;
             
             document.getElementById('loaderOverlay').style.display = 'none';
         } catch (err) {

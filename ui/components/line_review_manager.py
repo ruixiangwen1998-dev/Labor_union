@@ -195,7 +195,12 @@ def render_review_manager(
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     nav1, nav2, nav3 = st.columns([1, 2, 1])
-    if nav1.button("上一頁", disabled=result["page"] <= 1, use_container_width=True):
+    if nav1.button(
+        "上一頁",
+        key="line_review_previous_page",
+        disabled=result["page"] <= 1,
+        use_container_width=True,
+    ):
         st.session_state[PAGE_KEY] = result["page"] - 1
         st.rerun()
     nav2.markdown(
@@ -204,6 +209,7 @@ def render_review_manager(
     )
     if nav3.button(
         "下一頁",
+        key="line_review_next_page",
         disabled=result["page"] >= result["total_pages"],
         use_container_width=True,
     ):
@@ -235,6 +241,24 @@ def render_review_manager(
     if detail["request_type"] == "staff_verification":
         detail_rows.update(
             {
+                "資料填寫狀態": "已填寫" if detail.get("submitted_at") else "尚未填寫",
+                "比對結果": {
+                    "not_submitted": "尚未填寫資料",
+                    "matched": "已找到唯一月嫂資料",
+                    "not_found": "查無完全符合資料",
+                    "conflict": "找到多筆資料，需要人工處理",
+                    "already_bound": "月嫂資料已綁定其他 LINE",
+                }.get(detail.get("match_status"), "尚未比對"),
+                "填寫姓名": detail.get("submitted_name") or "-",
+                "填寫生日": detail.get("submitted_birthday") or "-",
+                "身分證末四碼": detail.get("submitted_identity_last4") or "-",
+                "比對月嫂編號": detail.get("matched_staff_id") or "-",
+                "月嫂主檔姓名": detail.get("matched_staff_name") or "-",
+                "月嫂主檔電話": detail.get("matched_staff_phone") or "-",
+                "月嫂主檔身分證": detail.get("matched_staff_identity_masked") or "-",
+                "月嫂主檔生日": detail.get("matched_staff_birthday") or "-",
+                "月嫂在職狀態": detail.get("matched_staff_status") or "-",
+                "月嫂 LINE 綁定": "尚未綁定" if not detail.get("matched_staff_line_user_id") else "已有綁定",
                 "目前身分": ROLE_LABELS.get(
                     detail.get("current_line_role"), "尚未設定"
                 ),
@@ -270,6 +294,12 @@ def render_review_manager(
         st.info("目前帳號可以查看申請；核准或拒絕需要主管權限。")
         return
 
+    if (
+        detail["request_type"] == "staff_verification"
+        and detail.get("match_status") != "matched"
+    ):
+        st.warning("月嫂尚未完成唯一資料比對，目前不能核准綁定。")
+
     with st.form(f"line_review_decision_{request_id}"):
         decision_label = st.radio("處理決定", ["核准", "拒絕"], horizontal=True)
         reason = st.text_area(
@@ -278,7 +308,15 @@ def render_review_manager(
             max_chars=1000,
         )
         confirmed = st.checkbox("我已核對上述資料，確認執行此操作")
-        submitted = st.form_submit_button("送出審查結果", type="primary")
+        submitted = st.form_submit_button(
+            "送出審查結果",
+            type="primary",
+            disabled=(
+                decision_label == "核准"
+                and detail["request_type"] == "staff_verification"
+                and detail.get("match_status") != "matched"
+            ),
+        )
     if submitted:
         if not confirmed:
             st.error("請先勾選確認。")

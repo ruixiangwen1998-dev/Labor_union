@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>月嫂身分資料確認</title>
+    <style>
+        :root { color-scheme: light; --primary:#4a90e2; --danger:#c62828; --ok:#2e7d32; }
+        * { box-sizing:border-box; }
+        body { margin:0; padding:20px 12px; background:#eef3f8; color:#263238; font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif; }
+        main { max-width:520px; margin:auto; padding:26px 22px; border-radius:18px; background:#fff; box-shadow:0 8px 30px rgba(30,60,90,.10); }
+        h1 { margin:0 0 8px; color:var(--primary); font-size:24px; }
+        .intro { margin:0 0 22px; color:#607d8b; line-height:1.65; }
+        label { display:block; margin:16px 0 7px; font-weight:700; }
+        input { width:100%; min-height:46px; padding:10px 12px; border:1px solid #cfd8dc; border-radius:9px; font-size:16px; }
+        input:focus { outline:3px solid rgba(74,144,226,.18); border-color:var(--primary); }
+        button { width:100%; margin-top:24px; min-height:50px; border:0; border-radius:10px; color:#fff; background:var(--primary); font-size:17px; font-weight:700; cursor:pointer; }
+        button:disabled { opacity:.55; cursor:wait; }
+        #message { display:none; margin:18px 0 0; padding:13px; border-radius:9px; line-height:1.55; }
+        #message.error { display:block; color:var(--danger); background:#ffebee; }
+        #message.success { display:block; color:var(--ok); background:#e8f5e9; }
+        .privacy { margin-top:18px; color:#78909c; font-size:13px; line-height:1.55; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>月嫂身分資料確認</h1>
+    <p class="intro">請輸入您在工會留存的基本資料。系統比對後仍會交由工會人員人工確認，不會立即切換身分。</p>
+    <form id="verificationForm">
+        <label for="name">姓名</label>
+        <input id="name" name="name" autocomplete="name" maxlength="100" required>
+
+        <label for="identityCard">身分證字號</label>
+        <input id="identityCard" name="identityCard" autocomplete="off" maxlength="20" required autocapitalize="characters">
+
+        <label for="birthday">生日</label>
+        <input id="birthday" name="birthday" type="date" required>
+
+        <button id="submitButton" type="submit" disabled>送出資料供工會確認</button>
+    </form>
+    <div id="message" role="status" aria-live="polite"></div>
+    <p class="privacy">完整身分證僅用於本次既有資料比對；申請紀錄只保存末四碼與比對到的月嫂編號。</p>
+</main>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+    let requestToken = '';
+    let developmentUserId = '';
+    let enteredThroughLiff = false;
+    let idToken = '';
+    const message = document.getElementById('message');
+    const submitButton = document.getElementById('submitButton');
+
+    function showMessage(text, type) {
+        message.textContent = text;
+        message.className = type;
+    }
+
+    function readLiffParameters() {
+        const direct = new URLSearchParams(window.location.search);
+        requestToken = direct.get('token') || requestToken;
+        developmentUserId = direct.get('userId') || developmentUserId;
+        enteredThroughLiff = direct.get('viaLiff') === '1' || enteredThroughLiff;
+        const state = direct.get('liff.state');
+        if (state) {
+            const stateUrl = new URL(state, window.location.origin);
+            requestToken = stateUrl.searchParams.get('token') || requestToken;
+            developmentUserId = stateUrl.searchParams.get('userId') || developmentUserId;
+        }
+    }
+
+    async function prepare() {
+        try {
+            const configResponse = await fetch('/api/line/config');
+            const config = await configResponse.json();
+            const liffId = config.staff_verification_liff_id || config.liff_id;
+            if (liffId) {
+                await liff.init({ liffId });
+                if (!liff.isLoggedIn()) {
+                    if (enteredThroughLiff) {
+                        throw new Error('LINE 登入狀態已失效，請回到聊天室重新開啟驗證連結');
+                    }
+                    // 專用 LIFF Endpoint 才能以目前頁面作為合法 redirectUri。
+                    if (config.staff_verification_liff_id) {
+                        liff.login({ redirectUri: window.location.href });
+                        return;
+                    }
+                    throw new Error('請回到 LINE 聊天室，從最新的月嫂驗證連結開啟此頁');
+                }
+                idToken = liff.getIDToken() || '';
+            } else if (config.identity_verification_required) {
+                throw new Error('月嫂驗證 LIFF 尚未設定，請聯絡工會人員');
+            }
+            // LIFF 會在 init 後透過 liff.state 帶入 LIFF URL 的額外 query。
+            readLiffParameters();
+            if (!requestToken) {
+                throw new Error('驗證連結缺少申請憑證，請回到 LINE 重新申請');
+            }
+            const stateResponse = await fetch(`/api/line/staff-verification?token=${encodeURIComponent(requestToken)}`);
+            const stateBody = await stateResponse.json();
+            if (!stateResponse.ok) throw new Error(stateBody.detail || '驗證連結無效');
+            submitButton.disabled = false;
+            if (stateBody.data.submitted) {
+                showMessage('您已送出過資料；在連結有效且未超過次數時仍可重新修正。', 'success');
+            }
+        } catch (error) {
+            showMessage(error.message || '頁面初始化失敗，請重新開啟。', 'error');
+        }
+    }
+
+    document.getElementById('verificationForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        try {
+            const response = await fetch('/api/line/staff-verification/submit', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({
+                    token: requestToken,
+                    name: document.getElementById('name').value,
+                    identity_card: document.getElementById('identityCard').value,
+                    birthday: document.getElementById('birthday').value,
+                    line_id_token: idToken,
+                    development_line_user_id: developmentUserId
+                })
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.detail || '資料送出失敗');
+            showMessage(body.message || '資料已送交工會人員確認。', 'success');
+            document.getElementById('verificationForm').reset();
+        } catch (error) {
+            showMessage(error.message || '資料送出失敗，請稍後再試。', 'error');
+            submitButton.disabled = false;
+        }
+    });
+
+    window.addEventListener('load', prepare);
+</script>
+</body>
+</html>

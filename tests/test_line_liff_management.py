@@ -132,6 +132,17 @@ def test_bind_and_registration_send_id_token_to_backend():
     assert "line_id_token: currentIdToken" in register
 
 
+def test_gateway_routes_staff_verification_after_shared_liff_login():
+    gateway = (ROOT / "line" / "static" / "gateway.html").read_text(encoding="utf-8")
+    staff_page = (ROOT / "line" / "static" / "staff_verification.html").read_text(encoding="utf-8")
+
+    assert "liff.state" in gateway
+    assert "target !== 'staff-verification'" in gateway
+    assert "/staff-verification-page?" in gateway
+    assert "viaLiff" in gateway
+    assert "LINE 登入狀態已失效" in staff_page
+
+
 def test_liff_manager_uses_service_staff_friendly_labels():
     source = (ROOT / "ui/components/line_liff_manager.py").read_text(encoding="utf-8")
 

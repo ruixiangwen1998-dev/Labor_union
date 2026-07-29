@@ -1,4 +1,187 @@
 {
   "version": 1,
-  "revisions": []
+  "revisions": [
+    {
+      "revision": "56249691bc578ec3bf38f8eae04cc6d9e1a7c953434bb76786503b1b2b7d206e",
+      "created_at": "2026-07-28T03:22:42.952365+00:00",
+      "actor": "development-bypass",
+      "reason": "replace configuration",
+      "config": {
+        "version": 2,
+        "theme": {
+          "primary_color": "#4A90E2",
+          "primary_hover_color": "#357ABD",
+          "background": "linear-gradient(135deg, #EEF2F7 0%, #D9E2EC 100%)",
+          "text_color": "#334E68",
+          "muted_text_color": "#627D98",
+          "font_family": "'Outfit', 'Noto Sans TC', sans-serif"
+        },
+        "pages": {
+          "gateway": {
+            "page_type": "navigation",
+            "enabled": true,
+            "title": "歡迎！請選擇您的狀態",
+            "subtitle": "為協助您快速完成服務建檔，請告訴我們您是否已經填寫過申請表單？",
+            "submit_button": "繼續",
+            "success_title": "",
+            "success_description": "",
+            "loading_text": "正在準備您的專屬通道...",
+            "content": {
+              "logo": "新竹市月子工會",
+              "redirect_loading_text": "正在為您跳轉...",
+              "load_error": "載入失敗，請嘗試重新整理。"
+            },
+            "actions": [
+              {
+                "id": "bind_existing",
+                "label": "已登記服務 / 補助",
+                "description": "我已經登記過政府補助或填寫過 BeClass 表單，我要直接綁定查詢進度。",
+                "icon": "📝",
+                "path": "/bind-page",
+                "enabled": true,
+                "order": 10
+              },
+              {
+                "id": "register_new",
+                "label": "尚未填寫登記表單",
+                "description": "我是新客戶，尚未填寫任何資料，我要現在填寫並建立服務訂單。",
+                "icon": "✨",
+                "path": "/register-page",
+                "enabled": true,
+                "order": 20
+              }
+            ],
+            "fields": []
+          },
+          "bind": {
+            "page_type": "bind",
+            "enabled": true,
+            "title": "服務綁定與訂單查詢",
+            "subtitle": "請填寫您的基本資料，以完成 LINE 帳號與最新訂單的綁定與查詢。",
+            "submit_button": "確認綁定",
+            "success_title": "綁定與查詢成功",
+            "success_description": "您的服務綁定與最新案件查詢已成功。",
+            "loading_text": "正在初始化系統...",
+            "content": {
+              "logo": "新竹市月子工會",
+              "rebind_title": "確認重新綁定",
+              "rebind_description": "本筆訂單已有綁定另一個帳戶。確認後將送交工會人員審核，通過後才會重新綁定。",
+              "rebind_cancel_button": "取消綁定",
+              "rebind_confirm_button": "送出重新綁定申請",
+              "close_button": "關閉視窗",
+              "client_prefill_message": "已自動帶入您先前綁定之姓名與電話。若本次訂單使用不同資料，請修改後再按確認綁定。",
+              "validation_error": "請填寫所有必要欄位。",
+              "submit_loading_text": "正在核對並綁定帳號...",
+              "rebind_loading_text": "正在送出重新綁定申請..."
+            },
+            "actions": [],
+            "fields": [
+              {
+                "id": "name",
+                "label": "您的真實姓名",
+                "type": "text",
+                "required": true,
+                "enabled": true,
+                "order": 10,
+                "placeholder": "請輸入姓名",
+                "help_text": "",
+                "system_field": true,
+                "options": []
+              },
+              {
+                "id": "phone",
+                "label": "您的聯絡電話",
+                "type": "phone",
+                "required": true,
+                "enabled": true,
+                "order": 20,
+                "placeholder": "請輸入聯絡電話（例 0912345678）",
+                "help_text": "",
+                "system_field": true,
+                "options": []
+              }
+            ]
+          },
+          "registration": {
+            "page_type": "registration",
+            "enabled": true,
+            "title": "產婦服務登記表單",
+            "subtitle": "請詳細填寫以下資料，送出後將為您建立專屬服務檔案並進行媒合。",
+            "submit_button": "送出完整服務登記表單",
+            "success_title": "送出成功！",
+            "success_description": "您的服務資料已經完整登錄至系統。案件編號完成行政核發後，LINE 將主動通知您。",
+            "loading_text": "資料傳送中，請稍候...",
+            "content": {
+              "logo": "新竹市月子工會",
+              "close_button": "關閉視窗",
+              "custom_section_title": "其他服務需求"
+            },
+            "actions": [],
+            "fields": [
+              {
+                "id": "name",
+                "label": "產婦姓名",
+                "type": "text",
+                "required": true,
+                "enabled": true,
+                "order": 10,
+                "placeholder": "請填寫真實姓名",
+                "help_text": "",
+                "system_field": true,
+                "options": []
+              },
+              {
+                "id": "phone",
+                "label": "行動電話",
+                "type": "phone",
+                "required": true,
+                "enabled": true,
+                "order": 20,
+                "placeholder": "例如：0912345678",
+                "help_text": "",
+                "system_field": true,
+                "options": []
+              },
+              {
+                "id": "expected_date",
+                "label": "預產期（或已生產日期）",
+                "type": "date",
+                "required": true,
+                "enabled": true,
+                "order": 30,
+                "placeholder": "",
+                "help_text": "",
+                "system_field": true,
+                "options": []
+              },
+              {
+                "id": "service_days",
+                "label": "預計服務天數",
+                "type": "number",
+                "required": true,
+                "enabled": true,
+                "order": 40,
+                "placeholder": "例如：30",
+                "help_text": "",
+                "system_field": true,
+                "options": []
+              },
+              {
+                "id": "address",
+                "label": "服務地址",
+                "type": "text",
+                "required": true,
+                "enabled": true,
+                "order": 50,
+                "placeholder": "請填寫完整地址（含巷弄樓層）",
+                "help_text": "",
+                "system_field": true,
+                "options": []
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

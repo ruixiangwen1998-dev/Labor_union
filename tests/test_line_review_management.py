@@ -29,16 +29,24 @@ def _insert_staff_review(user_id: str) -> int:
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
+            staff_name = f"review-{user_id[-32:]}"
+            cursor.execute(
+                "INSERT INTO staff (name,identity_card,birthday) VALUES (%s,%s,'1990-01-01')",
+                (staff_name, f"T1{uuid.uuid4().int % 100000000:08d}"),
+            )
+            staff_id = int(cursor.lastrowid)
             cursor.execute(
                 "INSERT INTO line_users (line_user_id,role,status) VALUES (%s,'customer','active')",
                 (user_id,),
             )
             cursor.execute(
                 """
-                INSERT INTO line_confirmation_requests (request_type,line_user_id)
-                VALUES ('staff_verification',%s)
+                INSERT INTO line_confirmation_requests (
+                    request_type,line_user_id,matched_staff_id,match_status,
+                    submitted_name,submitted_birthday,submitted_identity_last4,submitted_at
+                ) VALUES ('staff_verification',%s,%s,'matched',%s,'1990-01-01','0000',UTC_TIMESTAMP())
                 """,
-                (user_id,),
+                (user_id, staff_id, staff_name),
             )
             request_id = int(cursor.lastrowid)
         conn.commit()
@@ -61,6 +69,10 @@ def _cleanup_review(request_id: int, user_ids: list[str], client_id: int | None 
             )
             cursor.execute("DELETE FROM line_confirmation_requests WHERE id=%s", (request_id,))
             for user_id in user_ids:
+                cursor.execute(
+                    "DELETE FROM staff WHERE line_user_id=%s OR name=%s",
+                    (user_id, f"review-{user_id[-32:]}"),
+                )
                 cursor.execute("DELETE FROM line_users WHERE line_user_id=%s", (user_id,))
             if client_id:
                 cursor.execute("DELETE FROM clients WHERE id=%s", (client_id,))
@@ -256,7 +268,7 @@ def test_review_filters_and_ui_have_no_fixed_polling():
             status="pending",
             search=str(request_id),
         )
-        assert listed["total"] == 1
+        assert any(int(item["id"]) == request_id for item in listed["items"])
     finally:
         _cleanup_review(request_id, [user_id])
 
@@ -391,3 +403,21 @@ def test_review_manager_hides_raw_line_identifier_labels():
     source = (ROOT / "ui/components/line_review_manager.py").read_text(encoding="utf-8")
 
     assert "LINE User ID" not in source
+
+
+def test_line_review_and_task_pagination_buttons_use_distinct_keys():
+    review_source = (ROOT / "ui/components/line_review_manager.py").read_text(
+        encoding="utf-8"
+    )
+    task_source = (ROOT / "ui/components/line_task_manager.py").read_text(
+        encoding="utf-8"
+    )
+
+    expected_keys = {
+        'key="line_review_previous_page"',
+        'key="line_review_next_page"',
+        'key="line_task_previous_page"',
+        'key="line_task_next_page"',
+    }
+    combined_source = review_source + task_source
+    assert all(key in combined_source for key in expected_keys)

@@ -211,7 +211,9 @@
       "enabled": true,
       "content": "加入第二天，您可以透過下方選單查詢案件與聯絡工會專員。",
       "variables": [],
-      "usage": ["schedule"]
+      "usage": [
+        "schedule"
+      ]
     },
     {
       "id": "new_user_d3",
@@ -221,7 +223,9 @@
       "enabled": true,
       "content": "加入第三天，如有服務需求或疑問，歡迎隨時透過 LINE 聯絡工會。",
       "variables": [],
-      "usage": ["schedule"]
+      "usage": [
+        "schedule"
+      ]
     },
     {
       "id": "client_rebind_approved",
@@ -237,7 +241,10 @@
           "description": "重新綁定的客戶姓名"
         }
       ],
-      "usage": ["push", "customer_service"]
+      "usage": [
+        "push",
+        "customer_service"
+      ]
     },
     {
       "id": "client_rebind_rejected",
@@ -247,7 +254,10 @@
       "enabled": true,
       "content": "【系統通知】\n您的帳號重新綁定申請未通過。如有疑問，請聯絡工會服務人員。",
       "variables": [],
-      "usage": ["push", "customer_service"]
+      "usage": [
+        "push",
+        "customer_service"
+      ]
     },
     {
       "id": "staff_verification_requested",
@@ -257,7 +267,9 @@
       "enabled": true,
       "content": "月嫂身分申請已送出，請等待工會服務人員確認。確認通過後，系統會自動切換至月嫂專屬選單。",
       "variables": [],
-      "usage": ["webhook"]
+      "usage": [
+        "webhook"
+      ]
     },
     {
       "id": "staff_verification_rejected",
@@ -267,7 +279,9 @@
       "enabled": true,
       "content": "您的月嫂身分驗證申請未通過，請聯絡工會服務人員確認資格。",
       "variables": [],
-      "usage": ["webhook"]
+      "usage": [
+        "webhook"
+      ]
     }
   ]
 }

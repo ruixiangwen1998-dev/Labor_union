@@ -44,3 +44,40 @@
 
 ## 🗑️ 刪除/重新命名檔案
 - `ui/services` 資料夾重新命名為 `ui/api_clients`，解決了與後端 `services` 模組撞名的問題。
+
+---
+
+## 月嫂 LIFF 資料驗證與人工核准綁定
+
+### 新增檔案
+
+- `line/static/staff_verification.html`：月嫂輸入姓名、身分證字號與生日的 LIFF 頁面。
+- `api/routes/line_staff_verification.py`：驗證頁狀態查詢及資料送出 API。
+- `api/schemas/line_staff_verification.py`：月嫂驗證 API 請求格式。
+- `services/line_staff_verification_service.py`：一次性連結、LINE 身分確認、既有月嫂資料比對及結果保存。
+- `db/schema_parts/98_line_staff_verification.sql`：可重複執行的資料庫欄位與索引 migration。
+- `tests/test_line_staff_verification.py`：驗證送出、資料比對、人工核准及 LINE 綁定整合測試。
+
+### 修改檔案
+
+- `line/line_bot.py`：收到「我是月嫂」時建立確認申請並傳送驗證頁連結。
+- `api/main.py`：掛載月嫂驗證 API。
+- `services/line_review_service.py`：審查畫面資料擴充，核准時安全綁定 `staff_id`、LINE 帳號與 `staff` 角色。
+- `ui/components/line_review_manager.py`：顯示送出資料、比對結果及既有月嫂資訊，未成功比對時禁止核准。
+- `db/schema.sql`：擴充 `line_confirmation_requests` 驗證與比對欄位。
+- `.env.example`：新增 `LINE_STAFF_VERIFICATION_LIFF_ID` 設定說明。
+- `tests/test_line_review_management.py`：調整人工審查測試資料以符合先比對再核准流程。
+
+### 驗證結果
+
+- migration 已套用至開發資料庫，未清空既有資料。
+- LINE、LIFF、人工審查、任務及 API 安全測試共 35 項通過。
+- 未建立或遺留一次性 Python 檔案。
+
+### 修復：沿用既有 LIFF 時開啟月嫂驗證頁跳轉 HTTP 400
+
+- `services/line_staff_verification_service.py`：未設定專用 LIFF ID 時，改由既有 `LINE_LIFF_ID` Gateway 產生驗證入口。
+- `line/static/gateway.html`：登入完成後解析 query／`liff.state`，只允許固定的月嫂驗證目標並安全轉送 token。
+- `line/static/staff_verification.html`：共用 LIFF 登入失效時顯示錯誤，不再使用未登記的目前網址呼叫 `liff.login()`。
+- 新增共用 Gateway、專用 LIFF 相容性及前端導向防退化測試；相關測試 38 項通過。
+- `.env.example` 將舊名稱 `LINE_LOGIN_ID` 統一為後端實際驗證 ID Token 使用的 `LINE_LOGIN_CHANNEL_ID`。

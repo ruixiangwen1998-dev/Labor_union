@@ -38,6 +38,10 @@ from services.line_liff_identity_service import (
     liff_token_required,
     resolve_line_user_id,
 )
+from services.line_staff_verification_service import (
+    build_staff_verification_url,
+    issue_staff_verification_token,
+)
 
 # 載入環境變數
 load_dotenv()
@@ -196,6 +200,9 @@ async def get_line_config():
         liff_id = get_setting("line_liff_id", "")
     return {
         "liff_id": liff_id,
+        "staff_verification_liff_id": os.getenv(
+            "LINE_STAFF_VERIFICATION_LIFF_ID", ""
+        ).strip(),
         "identity_verification_required": liff_token_required(),
         "line_login_channel_id_configured": bool(
             os.getenv("LINE_LOGIN_CHANNEL_ID", "").strip()
@@ -597,6 +604,12 @@ async def serve_register_page():
     return FileResponse("line/static/register.html")
 
 
+@router.get("/staff-verification-page")
+async def serve_staff_verification_page():
+    """提供月嫂既有資料比對與 LINE 綁定申請頁面。"""
+    return FileResponse("line/static/staff_verification.html")
+
+
 @router.get("/api/line/staff/review-requests")
 def list_staff_review_requests(
     request_type: str | None = None,
@@ -920,11 +933,25 @@ async def line_webhook(request: Request):
                                 (user_id,),
                             )
                             request_id = cursor.lastrowid
+                            verification_token = issue_staff_verification_token(
+                                cursor, request_id=request_id
+                            )
+                            verification_url = build_staff_verification_url(
+                                verification_token
+                            )
                             review_notifications.append(("staff_verification", request_id))
                             templates = load_message_templates()
+                            request_message = templates.get(
+                                "staff_verification_requested",
+                                "請填寫基本資料，完成後將交由工會人員確認。",
+                            )
                             enqueue_line_task(
                                 cursor, to_user_id=user_id,
-                                message_content=templates.get("staff_verification_requested", "月嫂身分申請已送出，請等待工會人員確認。"),
+                                message_content=(
+                                    f"{request_message}\n\n"
+                                    f"請點擊以下連結填寫姓名、身分證與生日：\n"
+                                    f"{verification_url}"
+                                ),
                                 source_event_id=event.get("webhookEventId"),
                                 idempotency_key=f"staff-verification-request:{request_id}",
                             )
