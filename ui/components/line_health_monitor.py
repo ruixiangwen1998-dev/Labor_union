@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: ui/components/line_health_monitor.py
-功能說明: LINE 管理中心主動監控總覽，顯示細分狀態、最後檢查時間與異常／恢復紀錄
+功能說明: LINE 管理中心主動監控總覽，顯示細分狀態、監控資料保存狀態與異常／恢復紀錄
 ================================================================================
 """
 
@@ -58,6 +58,11 @@ def render_line_health_monitor(overview: dict[str, Any], events: list[dict[str, 
 
     if overview.get("monitor_stale"):
         st.error("監控資料已超過 90 秒沒有更新，獨立監控程序可能已停止。")
+    elif overview.get("monitor_persistence_status") == "degraded":
+        st.error(
+            overview.get("monitor_persistence_message")
+            or "監控結果目前無法寫入資料庫，異常紀錄可能不完整。"
+        )
     elif overall == "healthy":
         st.success("所有已啟用的 LINE 服務檢查目前正常。")
     elif overall == "warning":
@@ -88,7 +93,10 @@ def render_line_health_monitor(overview: dict[str, Any], events: list[dict[str, 
 
     with st.expander("異常與恢復紀錄"):
         if not events:
-            st.caption("目前沒有監控異常紀錄。")
+            if overview.get("monitor_persistence_status") == "degraded":
+                st.warning("目前無法確認異常紀錄；請先排除監控資料庫寫入問題。")
+            else:
+                st.caption("目前沒有監控異常紀錄。")
         else:
             event_rows = [
                 {

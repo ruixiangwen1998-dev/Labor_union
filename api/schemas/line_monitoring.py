@@ -24,6 +24,8 @@ class MonitoringCheck(BaseModel):
     response_ms: int | None = None
     checked_at: str | None = None
     last_success_at: str | None = None
+    persistence_status: Literal["stored", "failed"] | None = None
+    persistence_error: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -31,4 +33,6 @@ class MonitoringOverview(BaseModel):
     generated_at: str | None = None
     overall_status: HealthStatus
     monitor_stale: bool
+    monitor_persistence_status: Literal["healthy", "degraded"] = "healthy"
+    monitor_persistence_message: str | None = None
     checks: dict[str, MonitoringCheck]

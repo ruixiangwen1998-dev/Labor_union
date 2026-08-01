@@ -6,6 +6,9 @@ from scripts import init_db
 from scripts.init_db import load_schema_parts
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class RecordingCursor:
     def __init__(self, fail_on=None):
         self.executed = []
@@ -58,6 +61,16 @@ def test_empty_schema_parts_directory_is_valid(tmp_path):
     parts.mkdir()
 
     assert load_schema_parts(RecordingCursor(), parts) == []
+
+
+def test_multi_caregiver_check_constraint_joins_table_metadata():
+    migration = (
+        ROOT / "db" / "schema_parts" / "95_multi_caregiver_schedule.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS t" in migration
+    assert "AND t.TABLE_NAME = 'staff_schedule_assignment_reviews'" in migration
+    assert "FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS\n    WHERE" not in migration
 
 
 class MainConnection:

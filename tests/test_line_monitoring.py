@@ -16,9 +16,11 @@ from api.main import app
 from services.db_service import get_connection
 from services.line_health_checks import (
     HealthCheckResult,
+    check_database_schema,
     check_development_supervisor,
     check_worker,
 )
+import services.line_monitor_service as line_monitor_service
 from services.line_monitor_service import (
     persist_check_result,
     record_service_heartbeat,
@@ -54,6 +56,32 @@ def test_schema_contains_active_monitoring_tables():
     assert "CREATE TABLE IF NOT EXISTS service_heartbeats" in schema
     assert "CREATE TABLE IF NOT EXISTS system_health_status" in schema
     assert "idx_alert_fingerprint_status" in schema
+
+
+def test_database_schema_check_accepts_current_monitoring_schema():
+    result = check_database_schema({})
+
+    assert result.status == "healthy"
+    assert result.details["missing_requirements"] == []
+
+
+def test_monitoring_persistence_failure_is_visible(monkeypatch):
+    def unavailable_connection():
+        raise RuntimeError("monitor database unavailable")
+
+    monkeypatch.setattr(line_monitor_service, "get_connection", unavailable_connection)
+    result = HealthCheckResult(
+        "pytest_persistence",
+        "測試元件",
+        "healthy",
+        "檢查正常",
+        "2026-08-01T00:00:00",
+    )
+
+    current = persist_check_result(result, {}, {"checks": {}})
+
+    assert current["persistence_status"] == "failed"
+    assert "monitor database unavailable" in current["persistence_error"]
 
 
 def test_worker_heartbeat_is_read_as_healthy():

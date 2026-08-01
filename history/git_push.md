@@ -1,4 +1,4 @@
-# 月嫂 LIFF 驗證綁定、LINE 主動監控與雙向服務恢復
+# 月嫂 LIFF 驗證、LINE 主動監控、雙向恢復與 DB 結構防呆
 
 ## 更新摘要
 
@@ -88,4 +88,30 @@ LINE Monitor
 - 完整測試：812 項通過。
 - 另有 4 項既有訂單／表單 Streamlit AppTest 因固定 3 秒時限逾時，與本次 LINE 修改無關且和前次結果相同。
 - migration 已套用開發 DB，未清空既有資料。
+- 未建立或遺留一次性 Python 檔案。
+
+## 2026-08-01 合併後追加修復
+
+### 功能修正
+
+- 新增監控用 DB Schema 主動檢查，會確認 `system_alerts`、`service_monitor_alerts`、`service_heartbeats` 與 `system_health_status` 的關鍵欄位。
+- 監控資料寫入或讀取 DB 失敗時，不再靜默忽略或誤顯示正常；API 與 LINE 管理中心會顯示監控資料保存異常。
+- 異常事件無法讀取時，管理中心不再顯示成「目前沒有異常紀錄」。
+- 修復 `95_multi_caregiver_schedule.sql` 對 MySQL `CHECK_CONSTRAINTS.TABLE_NAME` 不存在欄位的引用，避免 `reset_DB.bat` 在 DROP 後中斷。
+
+### 本次修改檔案
+
+- `services/line_health_checks.py`：新增資料庫結構檢查。
+- `services/line_monitor_service.py`：揭露持久化及讀取錯誤，並在本機快照標記 degraded／critical。
+- `api/schemas/line_monitoring.py`：新增監控資料保存狀態欄位。
+- `config/line_monitoring.json`：啟用 `database_schema` 定期檢查。
+- `ui/components/line_health_monitor.py`：顯示 DB 結構及監控紀錄保存異常。
+- `db/schema_parts/95_multi_caregiver_schedule.sql`：修復 CHECK constraint metadata 查詢。
+- `tests/test_line_monitoring.py`、`tests/test_init_db_schema_parts.py`：新增回歸測試。
+
+### 驗證結果
+
+- 本機 `union_db` 已使用固定 v3 fixture 成功完整重建。
+- 監控／migration／DB 重建目標測試：20 項通過。
+- 完整測試：1569 項通過，0 項失敗，6 個既有棄用警告。
 - 未建立或遺留一次性 Python 檔案。

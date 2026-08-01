@@ -1,13 +1,14 @@
 """
 ================================================================================
 檔案名稱: services/line_monitor_service.py
-功能說明: 主動監控排程、程序心跳、狀態防抖、DB／本機快照及健康／服務重啟事件生命週期
+功能說明: 主動監控排程、程序心跳、狀態防抖、DB／本機快照、持久化故障揭露及異常事件生命週期
 ================================================================================
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import tempfile
@@ -32,6 +33,7 @@ DEFAULT_MONITORING_CONFIG = {
     "recovery_threshold": 2,
     "checks": {},
 }
+logger = logging.getLogger(__name__)
 
 
 def _utc_now_naive() -> datetime:
@@ -292,6 +294,8 @@ def persist_check_result(result: HealthCheckResult, config: dict[str, Any], snap
         "consecutive_successes": successes,
         "last_success_at": result.checked_at if result.status == "healthy" else (previous or {}).get("last_success_at"),
         "status_changed_at": changed_at,
+        "persistence_status": "stored",
+        "persistence_error": None,
     }
     try:
         conn = get_connection()
@@ -326,9 +330,11 @@ def persist_check_result(result: HealthCheckResult, config: dict[str, Any], snap
             conn.commit()
         finally:
             conn.close()
-    except Exception:
+    except Exception as exc:
         # DB 本身可能正是異常項目；本機原子快照仍須能保存診斷結果。
-        pass
+        logger.exception("無法將監控結果寫入資料庫：%s", result.check_name)
+        current["persistence_status"] = "failed"
+        current["persistence_error"] = str(exc)
     return current
 
 
@@ -351,6 +357,8 @@ def run_monitor_cycle(last_run: dict[str, datetime] | None = None) -> tuple[dict
     now = _utc_now_naive()
     snapshot = read_snapshot()
     checks = dict(snapshot.get("checks") or {})
+    persistence_attempted = False
+    persistence_failed = False
     for name, function in CHECK_FUNCTIONS.items():
         settings = (config.get("checks") or {}).get(name, {})
         if not settings.get("enabled", True):
@@ -363,17 +371,44 @@ def run_monitor_cycle(last_run: dict[str, datetime] | None = None) -> tuple[dict
         except Exception as exc:
             result = HealthCheckResult(name, name, "critical", "監控檢查發生未預期錯誤", now.isoformat(), details={"error": str(exc)})
         checks[name] = persist_check_result(result, config, {**snapshot, "checks": checks})
+        persistence_attempted = True
+        if checks[name].get("persistence_status") == "failed":
+            persistence_failed = True
         last_run[name] = now
-    snapshot = {"generated_at": now.isoformat(), "overall_status": _overall_status(checks), "checks": checks}
-    _write_snapshot(snapshot)
+    previous_persistence_status = snapshot.get("monitor_persistence_status", "healthy")
+    persistence_status = (
+        "degraded"
+        if persistence_failed
+        else "healthy"
+        if persistence_attempted
+        else previous_persistence_status
+    )
+    snapshot = {
+        "generated_at": now.isoformat(),
+        "overall_status": "critical" if persistence_status == "degraded" else _overall_status(checks),
+        "monitor_persistence_status": persistence_status,
+        "monitor_persistence_message": (
+            "監控結果無法寫入資料庫；目前僅保存在本機快照。"
+            if persistence_status == "degraded"
+            else "監控結果已寫入資料庫。"
+        ),
+        "checks": checks,
+    }
     try:
         record_service_heartbeat(
             "line_monitor",
             monitor_instance_id(),
             details={"pid": os.getpid(), "overall_status": snapshot["overall_status"]},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.exception("無法更新監控程序心跳")
+        snapshot = {
+            **snapshot,
+            "overall_status": "critical",
+            "monitor_persistence_status": "degraded",
+            "monitor_persistence_message": f"無法更新監控程序心跳：{exc}",
+        }
+    _write_snapshot(snapshot)
     return snapshot, last_run
 
 
@@ -403,9 +438,21 @@ def get_monitoring_overview() -> dict[str, Any]:
         if db_checks:
             latest_db = max((item.get("checked_at") or "" for item in db_checks.values()), default="")
             if latest_db >= str(snapshot.get("generated_at") or ""):
-                snapshot = {"generated_at": latest_db, "overall_status": _overall_status(db_checks), "checks": db_checks}
-    except Exception:
-        pass
+                snapshot = {
+                    "generated_at": latest_db,
+                    "overall_status": _overall_status(db_checks),
+                    "monitor_persistence_status": "healthy",
+                    "monitor_persistence_message": "監控結果已寫入資料庫。",
+                    "checks": db_checks,
+                }
+    except Exception as exc:
+        logger.exception("無法讀取資料庫中的監控狀態")
+        snapshot = {
+            **snapshot,
+            "overall_status": "critical",
+            "monitor_persistence_status": "degraded",
+            "monitor_persistence_message": f"無法讀取監控資料庫：{exc}",
+        }
     generated = snapshot.get("generated_at")
     stale = True
     if generated:
@@ -437,4 +484,5 @@ def list_monitoring_events(limit: int = 100) -> list[dict[str, Any]]:
             conn.close()
     except Exception:
         # DB 可能正是異常元件；總覽仍應能使用本機快照顯示狀態。
+        logger.exception("無法讀取服務監控事件")
         return []

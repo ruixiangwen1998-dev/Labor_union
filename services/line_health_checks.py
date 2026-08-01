@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: services/line_health_checks.py
-功能說明: 主動監控單項檢查，涵蓋 API、DB、Worker、任務、LINE、LIFF、服務監督器、設定與儲存空間
+功能說明: 主動監控單項檢查，涵蓋 API、DB 連線與結構、Worker、任務、LINE、LIFF、服務監督器、設定與儲存空間
 ================================================================================
 """
 
@@ -89,6 +89,74 @@ def check_database(settings: dict[str, Any]) -> HealthCheckResult:
     except Exception as exc:
         status, message, details, elapsed = "critical", "MySQL 無法連線或查詢", {"error": str(exc)}, None
     return HealthCheckResult("database", "資料庫", status, message, _utc_now_naive().isoformat(), elapsed, details)
+
+
+REQUIRED_MONITORING_SCHEMA = {
+    "system_alerts": {"alert_code"},
+    "service_monitor_alerts": {"event_type"},
+    "service_heartbeats": {"service_name"},
+    "system_health_status": {"check_name"},
+}
+
+
+def check_database_schema(_settings: dict[str, Any]) -> HealthCheckResult:
+    """Verify that the running database matches the monitoring code contract."""
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+                placeholders = ",".join(["%s"] * len(REQUIRED_MONITORING_SCHEMA))
+                cursor.execute(
+                    f"""
+                    SELECT TABLE_NAME,COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA=DATABASE()
+                      AND TABLE_NAME IN ({placeholders})
+                    """,
+                    tuple(REQUIRED_MONITORING_SCHEMA),
+                )
+                rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        available: dict[str, set[str]] = {}
+        for row in rows:
+            available.setdefault(row["TABLE_NAME"], set()).add(row["COLUMN_NAME"])
+        missing = [
+            f"{table}.{column}"
+            for table, columns in REQUIRED_MONITORING_SCHEMA.items()
+            for column in sorted(columns - available.get(table, set()))
+        ]
+        details = {
+            "required_tables": sorted(REQUIRED_MONITORING_SCHEMA),
+            "missing_requirements": missing,
+        }
+        if missing:
+            return HealthCheckResult(
+                "database_schema",
+                "資料庫結構",
+                "critical",
+                "資料庫結構與目前程式版本不一致",
+                _utc_now_naive().isoformat(),
+                details=details,
+            )
+        return HealthCheckResult(
+            "database_schema",
+            "資料庫結構",
+            "healthy",
+            "監控所需資料表與欄位完整",
+            _utc_now_naive().isoformat(),
+            details=details,
+        )
+    except Exception as exc:
+        return HealthCheckResult(
+            "database_schema",
+            "資料庫結構",
+            "unknown",
+            "目前無法檢查資料庫結構",
+            _utc_now_naive().isoformat(),
+            details={"error": str(exc)},
+        )
 
 
 def check_worker(settings: dict[str, Any]) -> HealthCheckResult:
@@ -335,6 +403,7 @@ def check_storage(settings: dict[str, Any]) -> HealthCheckResult:
 CHECK_FUNCTIONS: dict[str, Callable[[dict[str, Any]], HealthCheckResult]] = {
     "api": check_api,
     "database": check_database,
+    "database_schema": check_database_schema,
     "worker": check_worker,
     "development_supervisor": check_development_supervisor,
     "task_queue": check_task_queue,
