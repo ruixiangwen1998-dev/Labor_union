@@ -138,7 +138,7 @@ def record_supervisor_event(
             if state == "recovered":
                 cursor.execute(
                     """
-                    UPDATE system_alerts
+                    UPDATE service_monitor_alerts
                     SET status='resolved',resolved_at=UTC_TIMESTAMP(),
                         resolved_by='development_supervisor',
                         last_detected_at=UTC_TIMESTAMP(),description=%s,
@@ -154,7 +154,7 @@ def record_supervisor_event(
             else:
                 cursor.execute(
                     """
-                    SELECT id FROM system_alerts
+                    SELECT id FROM service_monitor_alerts
                     WHERE fingerprint=%s AND status='pending'
                     ORDER BY id DESC LIMIT 1 FOR UPDATE
                     """,
@@ -169,7 +169,7 @@ def record_supervisor_event(
                 if pending:
                     cursor.execute(
                         """
-                        UPDATE system_alerts
+                        UPDATE service_monitor_alerts
                         SET severity=%s,description=%s,last_detected_at=UTC_TIMESTAMP(),
                             occurrence_count=occurrence_count+1,details_json=%s
                         WHERE id=%s
@@ -179,7 +179,7 @@ def record_supervisor_event(
                 else:
                     cursor.execute(
                         """
-                        INSERT INTO system_alerts (
+                        INSERT INTO service_monitor_alerts (
                             event_type,description,status,component,severity,fingerprint,
                             first_detected_at,last_detected_at,details_json
                         ) VALUES (
@@ -246,7 +246,7 @@ def _upsert_alert(cursor, check_name: str, result: dict[str, Any], previous_stat
     fingerprint = f"line-monitor:{check_name}"
     if current_status in ABNORMAL_STATUSES:
         cursor.execute(
-            "SELECT id FROM system_alerts WHERE fingerprint=%s AND status='pending' ORDER BY id DESC LIMIT 1 FOR UPDATE",
+            "SELECT id FROM service_monitor_alerts WHERE fingerprint=%s AND status='pending' ORDER BY id DESC LIMIT 1 FOR UPDATE",
             (fingerprint,),
         )
         pending = cursor.fetchone()
@@ -254,7 +254,7 @@ def _upsert_alert(cursor, check_name: str, result: dict[str, Any], previous_stat
         if pending:
             cursor.execute(
                 """
-                UPDATE system_alerts SET severity=%s,description=%s,last_detected_at=UTC_TIMESTAMP(),
+                UPDATE service_monitor_alerts SET severity=%s,description=%s,last_detected_at=UTC_TIMESTAMP(),
                     occurrence_count=occurrence_count+1,details_json=%s WHERE id=%s
                 """,
                 (current_status, result["message"], details, pending["id"]),
@@ -262,7 +262,7 @@ def _upsert_alert(cursor, check_name: str, result: dict[str, Any], previous_stat
         elif previous_status != current_status:
             cursor.execute(
                 """
-                INSERT INTO system_alerts (
+                INSERT INTO service_monitor_alerts (
                     event_type,description,status,component,severity,fingerprint,
                     first_detected_at,last_detected_at,details_json
                 ) VALUES ('line_health',%s,'pending',%s,%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP(),%s)
@@ -272,7 +272,7 @@ def _upsert_alert(cursor, check_name: str, result: dict[str, Any], previous_stat
     elif current_status == "healthy" and previous_status in ABNORMAL_STATUSES:
         cursor.execute(
             """
-            UPDATE system_alerts SET status='resolved',resolved_at=UTC_TIMESTAMP(),resolved_by='monitor',
+            UPDATE service_monitor_alerts SET status='resolved',resolved_at=UTC_TIMESTAMP(),resolved_by='monitor',
                 last_detected_at=UTC_TIMESTAMP()
             WHERE fingerprint=%s AND status='pending'
             """,
@@ -425,7 +425,7 @@ def list_monitoring_events(limit: int = 100) -> list[dict[str, Any]]:
                     """
                     SELECT id,event_type,description,status,component,severity,fingerprint,
                            first_detected_at,last_detected_at,occurrence_count,resolved_at,resolved_by
-                    FROM system_alerts
+                    FROM service_monitor_alerts
                     WHERE event_type IN ('line_health','service_supervisor')
                     ORDER BY COALESCE(last_detected_at,created_at) DESC LIMIT %s
                     """,

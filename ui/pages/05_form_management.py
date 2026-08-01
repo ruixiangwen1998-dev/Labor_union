@@ -5,9 +5,9 @@
 ================================================================================
 """
 
-import os
 import requests
 import streamlit as st
+from ui.pages.shared import build_admin_headers, resolve_api_base_url
 
 from ui.pages.form_management.shared import (
     DB_TABLE_FIELDS,
@@ -58,10 +58,16 @@ def show():
                 return table_name
         return next(iter(form_db_table_fields))
 
-    base_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+    base_url = resolve_api_base_url()
 
     try:
-        resp_orders = requests.get(f"{base_url}/api/v1/orders", timeout=10)
+        admin_headers = build_admin_headers()
+
+        resp_orders = requests.get(
+            f"{base_url}/api/v1/orders",
+            headers=admin_headers,
+            timeout=10,
+        )
         resp_orders.raise_for_status()
         orders_payload = resp_orders.json()
         orders_data = orders_payload.get("data") if isinstance(orders_payload, dict) and orders_payload.get("success") else []
@@ -98,7 +104,11 @@ def show():
             target_order = next((o for o in orders_data if o['case_no'] == target_case_no), None)
             if target_order:
                 try:
-                    resp_clients = requests.get(f"{base_url}/api/v1/clients", timeout=10)
+                    resp_clients = requests.get(
+                        f"{base_url}/api/v1/clients",
+                        headers=admin_headers,
+                        timeout=10,
+                    )
                     resp_clients.raise_for_status()
                     clients_payload = resp_clients.json()
                     client_rows = clients_payload.get("data") if isinstance(clients_payload, dict) and clients_payload.get("success") else []

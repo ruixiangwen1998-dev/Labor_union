@@ -1,5 +1,25 @@
 -- 檔案名稱: db/schema_parts/97_line_active_monitoring.sql
--- 功能說明: 建立程序心跳、健康狀態並擴充監控／服務重啟異常事件；可重複執行。
+-- 功能說明: 建立程序心跳、健康狀態與獨立的服務監控事件；可重複執行。
+CREATE TABLE IF NOT EXISTS service_monitor_alerts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    event_type VARCHAR(50) NOT NULL COMMENT '異常事件類型',
+    description TEXT NOT NULL COMMENT '詳細異常描述',
+    status ENUM('pending', 'resolved') DEFAULT 'pending' COMMENT '處理狀態',
+    component VARCHAR(100) NULL COMMENT '異常所屬服務元件',
+    severity ENUM('warning','critical') NOT NULL DEFAULT 'warning',
+    fingerprint VARCHAR(191) NULL COMMENT '相同異常的穩定識別碼',
+    first_detected_at DATETIME NULL,
+    last_detected_at DATETIME NULL,
+    occurrence_count INT NOT NULL DEFAULT 1,
+    details_json JSON NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP NULL,
+    resolved_by VARCHAR(50) NULL,
+    INDEX idx_alert_status (status),
+    INDEX idx_alert_component_status (component, status, last_detected_at),
+    INDEX idx_alert_fingerprint_status (fingerprint, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS service_heartbeats (
     service_name VARCHAR(100) NOT NULL,
     instance_id VARCHAR(191) NOT NULL,
@@ -28,38 +48,38 @@ CREATE TABLE IF NOT EXISTS system_health_status (
     INDEX idx_health_checked (last_checked_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND COLUMN_NAME='component');
-SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE system_alerts ADD COLUMN component VARCHAR(100) NULL AFTER status', 'SELECT 1');
+SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND COLUMN_NAME='component');
+SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE service_monitor_alerts ADD COLUMN component VARCHAR(100) NULL AFTER status', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND COLUMN_NAME='severity');
-SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE system_alerts ADD COLUMN severity ENUM(''warning'',''critical'') NOT NULL DEFAULT ''warning'' AFTER component', 'SELECT 1');
+SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND COLUMN_NAME='severity');
+SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE service_monitor_alerts ADD COLUMN severity ENUM(''warning'',''critical'') NOT NULL DEFAULT ''warning'' AFTER component', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND COLUMN_NAME='fingerprint');
-SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE system_alerts ADD COLUMN fingerprint VARCHAR(191) NULL AFTER severity', 'SELECT 1');
+SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND COLUMN_NAME='fingerprint');
+SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE service_monitor_alerts ADD COLUMN fingerprint VARCHAR(191) NULL AFTER severity', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND COLUMN_NAME='first_detected_at');
-SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE system_alerts ADD COLUMN first_detected_at DATETIME NULL AFTER fingerprint', 'SELECT 1');
+SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND COLUMN_NAME='first_detected_at');
+SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE service_monitor_alerts ADD COLUMN first_detected_at DATETIME NULL AFTER fingerprint', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND COLUMN_NAME='last_detected_at');
-SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE system_alerts ADD COLUMN last_detected_at DATETIME NULL AFTER first_detected_at', 'SELECT 1');
+SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND COLUMN_NAME='last_detected_at');
+SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE service_monitor_alerts ADD COLUMN last_detected_at DATETIME NULL AFTER first_detected_at', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND COLUMN_NAME='occurrence_count');
-SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE system_alerts ADD COLUMN occurrence_count INT NOT NULL DEFAULT 1 AFTER last_detected_at', 'SELECT 1');
+SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND COLUMN_NAME='occurrence_count');
+SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE service_monitor_alerts ADD COLUMN occurrence_count INT NOT NULL DEFAULT 1 AFTER last_detected_at', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND COLUMN_NAME='details_json');
-SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE system_alerts ADD COLUMN details_json JSON NULL AFTER occurrence_count', 'SELECT 1');
+SET @column_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND COLUMN_NAME='details_json');
+SET @migration_sql = IF(@column_exists=0, 'ALTER TABLE service_monitor_alerts ADD COLUMN details_json JSON NULL AFTER occurrence_count', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @index_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND INDEX_NAME='idx_alert_component_status');
-SET @migration_sql = IF(@index_exists=0, 'ALTER TABLE system_alerts ADD INDEX idx_alert_component_status (component,status,last_detected_at)', 'SELECT 1');
+SET @index_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND INDEX_NAME='idx_alert_component_status');
+SET @migration_sql = IF(@index_exists=0, 'ALTER TABLE service_monitor_alerts ADD INDEX idx_alert_component_status (component,status,last_detected_at)', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;
 
-SET @index_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='system_alerts' AND INDEX_NAME='idx_alert_fingerprint_status');
-SET @migration_sql = IF(@index_exists=0, 'ALTER TABLE system_alerts ADD INDEX idx_alert_fingerprint_status (fingerprint,status)', 'SELECT 1');
+SET @index_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_monitor_alerts' AND INDEX_NAME='idx_alert_fingerprint_status');
+SET @migration_sql = IF(@index_exists=0, 'ALTER TABLE service_monitor_alerts ADD INDEX idx_alert_fingerprint_status (fingerprint,status)', 'SELECT 1');
 PREPARE migration_stmt FROM @migration_sql; EXECUTE migration_stmt; DEALLOCATE PREPARE migration_stmt;

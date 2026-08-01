@@ -25,7 +25,7 @@ def _run_order_page_with_mock_data(orders_data, clients=None, staff=None):
         page.show()
 
     app = AppTest.from_function(_app)
-    app.run()
+    app.run(timeout=15)
     return app
 
 
@@ -76,7 +76,7 @@ def test_order_tab_renderers_handle_empty_and_single_record():
         tab1._render_tab1_overview([])
 
     app = AppTest.from_function(run_tab1_empty)
-    app.run()
+    app.run(timeout=15)
     assert not app.exception
 
     def run_tab2_empty():
@@ -87,7 +87,7 @@ def test_order_tab_renderers_handle_empty_and_single_record():
         tab2._render_tab2_assign([], [], [])
 
     app = AppTest.from_function(run_tab2_empty)
-    app.run()
+    app.run(timeout=15)
     assert not app.exception
 
     def run_tab3():
@@ -105,7 +105,7 @@ def test_order_tab_renderers_handle_empty_and_single_record():
         tab3._render_tab3_finance([])
 
     app = AppTest.from_function(run_tab3)
-    app.run()
+    app.run(timeout=15)
     assert not app.exception
 
     def run_tab4():
@@ -128,7 +128,7 @@ def test_order_tab_renderers_handle_empty_and_single_record():
         tab4._render_tab4_accounts_payable()
 
     app = AppTest.from_function(run_tab4)
-    app.run()
+    app.run(timeout=15)
     assert not app.exception
 
     def run_tab5():
@@ -145,5 +145,5 @@ def test_order_tab_renderers_handle_empty_and_single_record():
         tab5._render_tab5_subsidy_reconciliation()
 
     app = AppTest.from_function(run_tab5)
-    app.run()
+    app.run(timeout=15)
     assert not app.exception

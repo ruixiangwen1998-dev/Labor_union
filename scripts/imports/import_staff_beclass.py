@@ -22,6 +22,22 @@ try:
 except Exception:
     pass
 
+# 讓 file_watcher.py 以子程序執行本檔時也能 import services 底下的模組
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
+from services.staff_import_validation import (
+    EXCEL_TO_DB_COLUMN,
+    fallback_case_key,
+    validate_staff_row,
+)
+from services.system_alert_service import (
+    delete_system_alert,
+    resolve_if_exists,
+    upsert_system_alert,
+)
+
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 DB_CONFIG = {
@@ -148,7 +164,7 @@ def process_import(excel_path):
     print(f"找到工作表：'{target_sheet}'，共有 {len(df)} 筆資料，準備匯入...")
 
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = pymysql.connect(**DB_CONFIG, cursorclass=pymysql.cursors.DictCursor)
         cursor = conn.cursor()
         cursor.execute("SET NAMES utf8mb4;")
         conn.commit()
@@ -162,13 +178,39 @@ def process_import(excel_path):
 
     try:
         for _, row in df.iterrows():
-            name = clean_data(row.get('姓名'), 'name')
-            if not name:
-                continue
+            raw_row = row.to_dict()
+            errors = validate_staff_row(raw_row)
+            name_for_alert = raw_row.get('姓名')
+            phone_for_alert = raw_row.get('行動電話')
 
+            name = clean_data(row.get('姓名'), 'name')
             identity_card = clean_data(row.get('身分證字號'), 'identity_card')
+
             if not identity_card:
                 review_required += 1
+                if errors:
+                    error_keys_joined = "、".join(errors.keys())
+                    upsert_system_alert(
+                        cursor,
+                        alert_code="IMPORT-004",
+                        source_domain="IMPORT",
+                        case_key=fallback_case_key(name_for_alert, phone_for_alert),
+                        reason=f"服務人員匯入資料異常（查無身分證字號）：{error_keys_joined}",
+                        details=errors,
+                    )
+                continue
+
+            if not name:
+                # staff.name 是 NOT NULL，缺姓名時無法建立資料，只能開警示提醒補件
+                review_required += 1
+                upsert_system_alert(
+                    cursor,
+                    alert_code="IMPORT-004",
+                    source_domain="IMPORT",
+                    case_key=identity_card,
+                    reason=f"服務人員 {identity_card} 缺少姓名，無法建立資料",
+                    details=errors,
+                )
                 continue
 
             ip_address = clean_data(row.get('IP位址'), 'ip_address')
@@ -229,12 +271,18 @@ def process_import(excel_path):
                 'status': 'active'
             }
 
+            # 驗證失敗的欄位一律存 NULL，避免髒資料進 DB，同時保留原因供異常警示使用
+            for excel_col in errors:
+                db_col = EXCEL_TO_DB_COLUMN.get(excel_col)
+                if db_col and db_col in record:
+                    record[db_col] = None
+
             cursor.execute(
-                "SELECT COUNT(*) AS existing_cnt FROM staff WHERE identity_card = %s",
+                "SELECT name FROM staff WHERE identity_card = %s",
                 (identity_card,)
             )
-            existing = cursor.fetchone()
-            existing_cnt = int(existing[0]) if existing and existing[0] is not None else 0
+            existing_rows = cursor.fetchall()
+            existing_cnt = len(existing_rows)
 
             if existing_cnt == 0:
                 cols = ", ".join([f"`{k}`" for k in record.keys()])
@@ -246,7 +294,12 @@ def process_import(excel_path):
 
                 bank_acc = clean_data(row.get('銀行帳號'), 'account_no')
                 if bank_acc:
-                    bank_branch = clean_data(row.get('銀行代碼3碼+分行代號4碼'), 'bank_branch')
+                    # 範例檔實際表頭是「銀行代3碼+分行代號4碼」(少一個「碼」字)，
+                    # 這裡兩種寫法都認，避免之後樣板又改回另一種寫法時又讀不到。
+                    bank_branch_raw = row.get('銀行代3碼+分行代號4碼')
+                    if pd.isna(bank_branch_raw):
+                        bank_branch_raw = row.get('銀行代碼3碼+分行代號4碼')
+                    bank_branch = clean_data(bank_branch_raw, 'bank_branch')
                     bank_code = bank_branch[:3] if bank_branch and len(bank_branch) >= 3 else None
                     branch_code = bank_branch[3:] if bank_branch and len(bank_branch) > 3 else None
                     cursor.execute(
@@ -268,30 +321,30 @@ def process_import(excel_path):
                     target_table='staff_regions',
                     value_col='region_name',
                     detail_col='custom_region_detail',
-                    excel_detail_col='[其他].1'
+                    excel_detail_col='[其它].1'
                 )
 
                 import_checkbox_options(
                     cursor, staff_id, row,
-                    options_list=['4小時(上班8:30-12:30)', '4小時(下午13:00-17:00)', '8小時', '24小時'],
+                    options_list=['4小時(上午8:30-12:30)', '4小時(下午13:00-17:00)', '8小時', '24小時'],
                     target_table='staff_time_slots',
                     value_col='slot_name',
                     detail_col='custom_slot_detail',
-                    excel_detail_col='[其他].2'
+                    excel_detail_col='[其它].2'
                 )
 
                 import_checkbox_options(
                     cursor, staff_id, row,
-                    options_list=['煮食', '素食'],
+                    options_list=['葷食', '素食'],
                     target_table='staff_cooking_skills',
                     value_col='skill_name',
                     detail_col='custom_skill_detail',
-                    excel_detail_col='[其他]'
+                    excel_detail_col='[其它]'
                 )
 
                 import_checkbox_options(
                     cursor, staff_id, row,
-                    options_list=['機車', '汽車'],
+                    options_list=['機車', '轎車'],
                     target_table='staff_transportation',
                     value_col='vehicle_type'
                 )
@@ -302,16 +355,16 @@ def process_import(excel_path):
                     target_table='staff_holiday_availability',
                     value_col='holiday_name',
                     detail_col='custom_holiday_detail',
-                    excel_detail_col='[其他].5'
+                    excel_detail_col='[其它].5'
                 )
 
                 import_checkbox_options(
                     cursor, staff_id, row,
-                    options_list=['連續服務', '週休一日', '週休二日'],
+                    options_list=['連續服務', '週休1日', '週休2日'],
                     target_table='staff_weekly_rest',
                     value_col='rest_type',
                     detail_col='custom_rest_detail',
-                    excel_detail_col='[其他].3'
+                    excel_detail_col='[其它].3'
                 )
 
                 import_checkbox_options(
@@ -320,10 +373,45 @@ def process_import(excel_path):
                     target_table='staff_baby_types',
                     value_col='baby_type',
                     detail_col='custom_baby_detail',
-                    excel_detail_col='[其他].4'
+                    excel_detail_col='[其它].4'
                 )
+
+                # 有身分證字號了：若先前用 error_姓名_電話 這個替代鍵記錄過，就把舊的清掉
+                fallback_key = fallback_case_key(name_for_alert, phone_for_alert)
+                if not fallback_key.startswith("error_row_"):
+                    delete_system_alert(cursor, alert_code="IMPORT-004", case_key=fallback_key)
+
+                if errors:
+                    review_required += 1
+                    error_keys_joined = "、".join(errors.keys())
+                    upsert_system_alert(
+                        cursor,
+                        alert_code="IMPORT-004",
+                        source_domain="IMPORT",
+                        case_key=identity_card,
+                        reason=f"服務人員 {identity_card} 匯入資料異常：{error_keys_joined}",
+                        details=errors,
+                    )
+                else:
+                    resolve_if_exists(
+                        cursor,
+                        alert_code="IMPORT-004",
+                        case_key=identity_card,
+                        reason="系統重新匯入：欄位驗證通過，自動解除",
+                    )
             elif existing_cnt == 1:
                 skipped_existing += 1
+                existing_name = existing_rows[0]['name']
+                if existing_name and name and existing_name != name:
+                    # IMPORT-003(B)：同一身分證字號，這次匯入的姓名跟資料庫裡已存的姓名不一致
+                    upsert_system_alert(
+                        cursor,
+                        alert_code="IMPORT-003",
+                        source_domain="IMPORT",
+                        case_key=identity_card,
+                        reason=f"身分證字號 {identity_card} 重複，但姓名不一致：已存「{existing_name}」，本次匯入「{name}」",
+                        details={"身分證字號": identity_card, "已存姓名": existing_name, "本次匯入姓名": name},
+                    )
             else:
                 review_required += 1
 

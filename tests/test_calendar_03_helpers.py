@@ -54,3 +54,29 @@ def test_parse_stored_rest_dates_accepts_valid_list():
     parsed, error = mod._parse_stored_rest_dates('["2026-08-01"]')
     assert parsed == {date(2026, 8, 1)}
     assert error is None
+
+
+def test_normalise_calendar_schedule_map_restores_json_day_keys():
+    mod = _calendar_module()
+
+    result = mod._normalise_calendar_schedule_map(
+        {
+            "1": {"status": "red", "case_no": "CASE-1"},
+            2: {"status": "green", "case_no": "CASE-2"},
+            "bad": {"status": "yellow"},
+            "32": {"status": "yellow"},
+        }
+    )
+
+    assert result == {
+        1: {"status": "red", "case_no": "CASE-1"},
+        2: {"status": "green", "case_no": "CASE-2"},
+    }
+
+
+def test_safe_date_keeps_missing_actual_date_available_for_planned_fallback():
+    mod = _calendar_module()
+
+    assert mod.safe_date("") is None
+    assert mod.safe_date(None) is None
+    assert mod.safe_date("2026-07-03") == date(2026, 7, 3)

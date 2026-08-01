@@ -9,6 +9,7 @@ import pandas as pd
 
 from scripts.imports import import_finance_excel as importer
 from scripts.imports.finance_formats.taishin import TAISHIN_HEADERS
+from tests._finance_alert_mock_support import AutocommitOff, handle_finance_alert_sql
 
 
 class StatefulCursor:
@@ -20,6 +21,7 @@ class StatefulCursor:
         self.state = state
         self.current = None
         self.lastrowid = None
+        self.connection = AutocommitOff()
 
     def __enter__(self):
         return self
@@ -96,6 +98,8 @@ class StatefulCursor:
             row.update({"reconciliation_status": "reconciled", "reconciliation_reference": params[0]})
         elif compact.startswith("UPDATE finance_import_batches SET status='completed'"):
             self.state["batches"][params[0] - 1]["status"] = "completed"
+        elif handle_finance_alert_sql(self.state, compact, params, self):
+            pass
         else:
             raise AssertionError(f"unexpected SQL: {compact}")
 
@@ -174,8 +178,11 @@ def test_exact_unique_government_subsidy_reconciles_and_rerun_only_adds_occurren
 
     result, connection = _import(monkeypatch, path, state)
 
-    assert result == {"batch_id": 1, "inserted_rows": 1, "skipped_existing": 0,
-                      "reconciled_counts": {"government_subsidy": 1}, "pending_rows": []}
+    assert {key: result[key] for key in (
+        "batch_id", "inserted_rows", "skipped_existing",
+        "reconciled_counts", "pending_rows",
+    )} == {"batch_id": 1, "inserted_rows": 1, "skipped_existing": 0,
+          "reconciled_counts": {"government_subsidy": 1}, "pending_rows": []}
     row, batch = state["rows"][0], state["claim_batches"][0]
     assert row["classification_type"] == "government_subsidy"
     assert row["reconciliation_status"] == "reconciled"

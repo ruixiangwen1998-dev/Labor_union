@@ -10,6 +10,7 @@ import pandas as pd
 from scripts.imports import import_finance_excel as importer
 from scripts.imports.finance_formats.sinopac import SINOPAC_HEADERS
 from scripts.imports.finance_formats.taishin import TAISHIN_HEADERS
+from tests._finance_alert_mock_support import AutocommitOff, handle_finance_alert_sql
 
 
 STAFF = 7
@@ -24,6 +25,7 @@ class Cursor:
 
     def __init__(self, state):
         self.state, self.current, self.lastrowid = state, None, None
+        self.connection = AutocommitOff()
 
     def __enter__(self):
         return self
@@ -84,6 +86,8 @@ class Cursor:
             self._row(params[1]).update(reconciliation_status="reconciled", reconciliation_reference=params[0])
         elif q.startswith("UPDATE finance_import_batches SET status='completed'"):
             self.state["batches"][params[0] - 1]["status"] = "completed"
+        elif handle_finance_alert_sql(self.state, q, params, self):
+            pass
         else:
             raise AssertionError(f"unexpected SQL: {q}")
 

@@ -18,6 +18,13 @@ except Exception:
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
+from services.db_service import get_connection
+from services.system_alert_service import resolve_if_exists, upsert_system_alert
+
 # \u5b9a\u7fa9\u76e3\u63a7\u76ee\u9304 \u2192 \u5c0d\u61c9\u7684\u532f\u5165\u8173\u672c\u8def\u5f91
 WATCH_CONFIG = {
     "downloads/hcm":             "scripts/imports/import_client_hcm.py",
@@ -69,6 +76,7 @@ class XlsxHandler(FileSystemEventHandler):
 
         print(f"\n[偵測到檔案變更] {event_path}")
         print(f"  觸發腳本: {self.script_path}")
+        case_key = f"{os.path.basename(self.watch_dir)}/{filename}"
         try:
             result = subprocess.run(
                 [sys.executable, self.script_path, event_path],
@@ -83,8 +91,53 @@ class XlsxHandler(FileSystemEventHandler):
                 print(f"[警告] {result.stderr.strip()}")
             if result.returncode != 0:
                 print(f"[錯誤] 腳本回傳非零返回碼: {result.returncode}")
+                self._record_failure(
+                    case_key, filename,
+                    f"腳本回傳非零返回碼 {result.returncode}：{result.stderr.strip()[:500]}"
+                )
+            else:
+                self._record_success(case_key)
         except Exception as e:
             print(f"[無法執行腳本] {e}")
+            self._record_failure(case_key, filename, f"無法執行腳本：{e}")
+
+    def _record_failure(self, case_key, filename, message):
+        """IMPORT-002：記錄本次觸發的匯入腳本失敗，供異常警示中心讀取。"""
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                upsert_system_alert(
+                    cursor,
+                    alert_code="IMPORT-002",
+                    source_domain="IMPORT",
+                    case_key=case_key,
+                    reason=f"檔案 {filename} 解析失敗：{message}",
+                    details={"檔案": filename, "監控目錄": self.watch_dir, "訊息": message},
+                )
+            conn.commit()
+        except Exception as exc:
+            print(f"[警示寫入失敗] {exc}")
+            conn.rollback()
+        finally:
+            conn.close()
+
+    def _record_success(self, case_key):
+        """同一檔案下次重新處理成功時，自動解除先前的 IMPORT-002 警示。"""
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                resolve_if_exists(
+                    cursor,
+                    alert_code="IMPORT-002",
+                    case_key=case_key,
+                    reason="重新處理成功，自動解除",
+                )
+            conn.commit()
+        except Exception as exc:
+            print(f"[警示解除失敗] {exc}")
+            conn.rollback()
+        finally:
+            conn.close()
 
     def on_created(self, event):
         if not event.is_directory:

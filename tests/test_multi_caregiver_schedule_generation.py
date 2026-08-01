@@ -50,6 +50,10 @@ class FakeConnection:
         self.closed = True
 
 
+class _TransactionMarker(Exception):
+    """Marker exception for exception instance propagation assertions."""
+
+
 def assignment(**overrides):
     return {
         "id": 21,
@@ -63,13 +67,24 @@ def assignment(**overrides):
     }
 
 
-def responses(*, target=None, assignments=None, payment=None, settlement=None, rest='["Sunday"]', holidays=None, schedules=None):
+def responses(
+    *,
+    target=None,
+    assignments=None,
+    payment=None,
+    settlement=None,
+    adjustments=None,
+    rest='["Sunday"]',
+    holidays=None,
+    schedules=None,
+):
     target = target or assignment()
     return [
         target,
         assignments if assignments is not None else [{k: target[k] for k in ("id", "status", "assigned_start_date", "assigned_end_date")}],
         payment,
         settlement,
+        adjustments,
         {"weekly_rest_days": rest},
         holidays or [],
         schedules or [],
@@ -105,6 +120,45 @@ def test_transaction_generator_uses_callers_cursor_without_connection_boundary(m
     assert len(result["assignment_schedule"]) == 3
     assert any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in cursor.executed)
     assert not any("COMMIT" in sql.upper() or "ROLLBACK" in sql.upper() for sql, _ in cursor.executed)
+
+
+def test_transaction_rejects_actual_hours_adjustments_without_writes(monkeypatch):
+    cursor = FakeCursor(responses(adjustments={"id": 3}))
+    monkeypatch.setattr(service, "get_connection", lambda: pytest.fail("must not open a connection"))
+
+    with pytest.raises(ValueError, match="actual-hours adjustments"):
+        service.generate_assignment_schedule_in_transaction(cursor, 21)
+
+    assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in cursor.executed)
+    assert not any(sql.startswith("UPDATE case_staff_assignments") for sql, _ in cursor.executed)
+    assert any(
+        "actual_hours_adjustments" in sql and "FOR UPDATE" in sql.upper()
+        for sql, _ in cursor.executed
+    )
+
+
+def test_transaction_rejects_payment_lock_without_writes(monkeypatch):
+    cursor = FakeCursor(responses(payment={"id": 3}, adjustments=None))
+    monkeypatch.setattr(service, "get_connection", lambda: pytest.fail("must not open a connection"))
+
+    with pytest.raises(ValueError, match="non-cancelled staff payment"):
+        service.generate_assignment_schedule_in_transaction(cursor, 21)
+
+    assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in cursor.executed)
+    assert not any(sql.startswith("UPDATE case_staff_assignments") for sql, _ in cursor.executed)
+    assert any("staff_payments" in sql and "FOR UPDATE" in sql.upper() for sql, _ in cursor.executed)
+
+
+def test_transaction_rejects_settlement_lock_without_writes(monkeypatch):
+    cursor = FakeCursor(responses(settlement={"id": 4}, adjustments=None, payment=None))
+    monkeypatch.setattr(service, "get_connection", lambda: pytest.fail("must not open a connection"))
+
+    with pytest.raises(ValueError, match="active monthly settlement detail"):
+        service.generate_assignment_schedule_in_transaction(cursor, 21)
+
+    assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in cursor.executed)
+    assert not any(sql.startswith("UPDATE case_staff_assignments") for sql, _ in cursor.executed)
+    assert any("staff_monthly_settlement_details" in sql and "FOR UPDATE" in sql.upper() for sql, _ in cursor.executed)
 
 
 def test_repeat_run_preserves_existing_manual_row_and_counts_it(monkeypatch):
@@ -148,6 +202,91 @@ def test_rejects_legacy_or_wrong_case_schedule_conflicts(monkeypatch, schedules,
 
     assert connection.commits == 0 and connection.rollbacks == 1
     assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in connection.cursor_obj.executed)
+
+
+@pytest.mark.parametrize(
+    ("service_hours", "message"),
+    [
+        (None, "service_hours_per_day must be a finite positive decimal"),
+        ("oops", "service_hours_per_day must be a finite positive decimal"),
+        (Decimal("NaN"), "service_hours_per_day must be a finite positive decimal"),
+        (Decimal("Infinity"), "service_hours_per_day must be a finite positive decimal"),
+        (Decimal("-Infinity"), "service_hours_per_day must be a finite positive decimal"),
+        (Decimal("0"), "service_hours_per_day must be a finite positive decimal"),
+        (Decimal("-1"), "service_hours_per_day must be a finite positive decimal"),
+    ],
+)
+def test_rejects_invalid_service_hours_before_writing_rows(monkeypatch, service_hours, message):
+    connection = FakeConnection(
+        responses(target=assignment(service_hours_per_day=service_hours))
+    )
+    monkeypatch.setattr(service, "get_connection", lambda: connection)
+
+    with pytest.raises(ValueError, match=message):
+        service.generate_assignment_schedule(21)
+
+    assert connection.commits == 0 and connection.rollbacks == 1
+    assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in connection.cursor_obj.executed)
+    assert not any(sql.startswith("UPDATE case_staff_assignments") for sql, _ in connection.cursor_obj.executed)
+
+
+def test_rejects_assignment_locked_by_actual_hours_adjustments(monkeypatch):
+    connection = FakeConnection(
+        responses(settlement=None, adjustments={"id": 3})
+    )
+    monkeypatch.setattr(service, "get_connection", lambda: connection)
+
+    with pytest.raises(ValueError, match="actual-hours adjustments"):
+        service.generate_assignment_schedule(21)
+
+    assert connection.commits == 0 and connection.rollbacks == 1
+    assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in connection.cursor_obj.executed)
+    assert not any(sql.startswith("UPDATE case_staff_assignments") for sql, _ in connection.cursor_obj.executed)
+    assert any(
+        "actual_hours_adjustments" in sql and "FOR UPDATE" in sql.upper()
+        for sql, _ in connection.cursor_obj.executed
+    )
+
+
+@pytest.mark.parametrize(
+    "service_hours",
+    [
+        None,
+        "oops",
+        Decimal("NaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+        Decimal("0"),
+        Decimal("-1"),
+    ],
+)
+def test_transaction_cursor_rejects_invalid_service_hours_without_writes(service_hours, monkeypatch):
+    cursor = FakeCursor(responses(target=assignment(service_hours_per_day=service_hours)))
+    monkeypatch.setattr(service, "get_connection", lambda: pytest.fail("must not open a connection"))
+
+    with pytest.raises(ValueError, match="service_hours_per_day must be a finite positive decimal"):
+        service.generate_assignment_schedule_in_transaction(cursor, 21)
+
+    assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in cursor.executed)
+    assert not any(sql.startswith("UPDATE case_staff_assignments") for sql, _ in cursor.executed)
+
+
+def test_transaction_propagates_custom_exception_instance(monkeypatch):
+    marker = _TransactionMarker("custom marker error")
+    cursor = FakeCursor(responses())
+
+    def raise_marker(_value: object) -> None:
+        raise marker
+
+    monkeypatch.setattr(service, "_normalize_service_hours", raise_marker)
+    monkeypatch.setattr(service, "get_connection", lambda: pytest.fail("must not open a connection"))
+
+    with pytest.raises(_TransactionMarker) as exc:
+        service.generate_assignment_schedule_in_transaction(cursor, 21)
+
+    assert exc.value is marker
+    assert not any(sql.startswith("INSERT INTO staff_schedule") for sql, _ in cursor.executed)
+    assert not any(sql.startswith("UPDATE case_staff_assignments") for sql, _ in cursor.executed)
 
 
 @pytest.mark.parametrize(

@@ -67,11 +67,14 @@ def get_staff_monthly_calendar_schedule(staff_id: int, year: int, month: int) ->
                     csa.case_no,
                     csa.staff_id,
                     csa.id AS assignment_id,
-                    c.name AS client_name
+                    c.name AS client_name,
+                    o.status AS order_status,
+                    s.name AS staff_name
                 FROM staff_schedule ss
                 JOIN case_staff_assignments csa ON ss.assignment_id = csa.id
                 JOIN orders o ON csa.case_no = o.case_no
                 JOIN clients c ON o.client_id = c.id
+                JOIN staff s ON csa.staff_id = s.id
                 WHERE csa.staff_id = %s
                   AND ss.assignment_id IS NOT NULL
                   AND ss.work_date BETWEEN %s AND %s
@@ -98,6 +101,8 @@ def get_staff_monthly_calendar_schedule(staff_id: int, year: int, month: int) ->
                     "case_no": row.get("case_no"),
                     "staff_id": row.get("staff_id", staff_id),
                     "client_name": row.get("client_name"),
+                    "order_status": row.get("order_status"),
+                    "staff_name": row.get("staff_name"),
                     "is_work_day": is_work_day,
                     "is_double_pay": is_double_pay,
                     "notes": row.get("notes"),
@@ -119,6 +124,66 @@ def get_staff_monthly_calendar_schedule(staff_id: int, year: int, month: int) ->
                 ):
                     schedule_map[day] = candidate
 
+            cursor.execute(
+                """
+                SELECT
+                    d.lock_date AS work_date,
+                    d.staff_id,
+                    d.lock_id,
+                    p.id AS plan_id,
+                    p.case_no,
+                    c.name AS client_name,
+                    o.status AS order_status,
+                    s.name AS staff_name
+                FROM caregiver_availability_lock_days d
+                JOIN caregiver_availability_locks l ON l.id = d.lock_id
+                JOIN caregiver_matching_plans p ON p.id = l.plan_id
+                JOIN orders o ON o.case_no = p.case_no
+                JOIN clients c ON c.id = o.client_id
+                JOIN staff s ON s.id = d.staff_id
+                WHERE d.staff_id = %s
+                  AND d.active_marker = 1
+                  AND l.status = 'active'
+                  AND l.is_active = 1
+                  AND d.lock_date BETWEEN %s AND %s
+                ORDER BY d.lock_date, d.id
+                """,
+                (staff_id, month_start, month_end),
+            )
+            lock_rows = cursor.fetchall()
+            for row in lock_rows:
+                work_date = _as_date(row.get("work_date"))
+                if work_date is None:
+                    continue
+                day = work_date.day
+                item = {
+                    "work_date": work_date.strftime("%Y-%m-%d"),
+                    "status": "waiting_deposit_lock",
+                    "assignment_id": None,
+                    "case_no": row.get("case_no"),
+                    "staff_id": row.get("staff_id", staff_id),
+                    "client_name": row.get("client_name"),
+                    "order_status": row.get("order_status"),
+                    "staff_name": row.get("staff_name"),
+                    "is_work_day": False,
+                    "is_double_pay": False,
+                    "notes": "已鎖定／待成立",
+                    "lock_id": row.get("lock_id"),
+                    "plan_id": row.get("plan_id"),
+                }
+                grouped_rows.setdefault(day, []).append(item)
+                if day not in schedule_map:
+                    schedule_map[day] = {
+                        "status": "yellow",
+                        "case_no": row.get("case_no"),
+                        "client_name": row.get("client_name"),
+                        "is_work_day": False,
+                        "is_double_pay": False,
+                        "assignment_id": None,
+                        "lock_id": row.get("lock_id"),
+                        "plan_id": row.get("plan_id"),
+                    }
+
             for d in range(1, num_days + 1):
                 cur_d = date(year, month, d)
                 cur_str = cur_d.strftime("%Y-%m-%d")
@@ -131,6 +196,8 @@ def get_staff_monthly_calendar_schedule(staff_id: int, year: int, month: int) ->
                         "case_no": None,
                         "staff_id": staff_id,
                         "client_name": None,
+                        "order_status": None,
+                        "staff_name": None,
                         "is_work_day": False,
                         "is_double_pay": False,
                         "notes": None,

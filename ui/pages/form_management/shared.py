@@ -15,7 +15,8 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime, date
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+from ui.pages.shared import build_admin_headers, resolve_api_base_url
 
 _FORM_MGMT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ui/pages
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(_FORM_MGMT_DIR))  # 專案根目錄
@@ -25,23 +26,24 @@ _PRIMARY_TEMPLATES_DIR = os.path.join(_PROJECT_ROOT, "db", "templates")
 JSON_TPL_PATH = os.path.join(_PROJECT_ROOT, "db", "form_templates.json")
 TEMPLATES_DIR = _PRIMARY_TEMPLATES_DIR if os.path.isdir(_PRIMARY_TEMPLATES_DIR) else _LEGACY_TEMPLATES_DIR
 CONTRACTS_DIR = os.path.join(_PRIMARY_TEMPLATES_DIR, "contracts") if os.path.isdir(_PRIMARY_TEMPLATES_DIR) else os.path.join(_LEGACY_TEMPLATES_DIR, "contracts")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 
 
 def fetch_staff_contract_context(case_no: str, assignment_id: int | None = None) -> dict:
     """Read staff-contract facts from FastAPI without writing the workbook."""
     query = urlencode({"assignment_id": assignment_id}) if assignment_id else ""
-    url = f"{API_BASE_URL}/api/v1/contracts/staff/{case_no}"
+    base_url = resolve_api_base_url()
+    url = f"{base_url}/api/v1/contracts/staff/{case_no}"
     if query:
         url = f"{url}?{query}"
+    request = Request(url=url, headers=build_admin_headers())
     try:
-        with urlopen(url, timeout=5) as response:
+        with urlopen(request, timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
         raise ValueError(f"契約資料 API 回應 {error.code}: {detail}") from error
     except URLError as error:
-        raise ValueError(f"無法連線契約資料 API ({API_BASE_URL}): {error.reason}") from error
+        raise ValueError(f"無法連線契約資料 API ({base_url}): {error.reason}") from error
 
     if not payload.get("success", False) or not isinstance(payload.get("data"), dict):
         raise ValueError(payload.get("error") or payload.get("message") or "契約資料 API 未回傳資料")

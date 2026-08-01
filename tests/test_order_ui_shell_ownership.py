@@ -45,21 +45,21 @@ def test_show_only_loads_initial_data_then_delegates_to_order_ui_shell():
 
 
 
-def test_order_ui_shell_owns_fixed_five_tab_layout_and_dispatch():
+def test_order_ui_shell_excludes_matching_and_keeps_order_finance_tabs():
     shell = _function_source("_render_order_page_shell")
 
     assert "st.tabs([" in shell
     for label in (
         "訂單資訊總覽",
-        "月嫂配對中心",
         "訂單帳務總覽",
         "應付帳款查詢/輸出",
         "核銷補助清冊",
     ):
         assert label in shell
+    assert "月嫂配對中心" not in shell
+    assert "_render_tab2_assign" not in shell
     for renderer in (
         "_render_tab1_overview(orders_data)",
-        "_render_tab2_assign(orders_data, clients, staff_list)",
         "_render_tab3_finance(orders_data)",
         "_render_tab4_accounts_payable()",
         "_render_tab5_subsidy_reconciliation()",

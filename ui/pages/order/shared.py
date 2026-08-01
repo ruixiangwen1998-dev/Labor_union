@@ -5,13 +5,11 @@
 ================================================================================
 """
 
-import os
 import math
 import requests
 from datetime import datetime, date, timedelta
 from calendar import monthrange
-
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+from ui.pages.shared import build_admin_headers, resolve_api_base_url
 
 def safe_float(val) -> float:
     if val is None:
@@ -108,10 +106,11 @@ def _derive_subsidy_refund_date(order: dict) -> str:
 
 def _payment_api_request(path, method="GET", payload=None):
     """Access payment ledgers only through FastAPI; never write summary columns directly."""
-    base_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+    base_url = resolve_api_base_url()
     response = requests.request(
         method,
         f"{base_url}/api/v1{path}",
+        headers=build_admin_headers(),
         json=payload,
         timeout=30,
     )
@@ -121,9 +120,10 @@ def _payment_api_request(path, method="GET", payload=None):
 
 def _finance_report_request(path, params=None, download=False):
     """Read finance reports exclusively through the FastAPI router."""
-    base_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+    base_url = resolve_api_base_url()
     response = requests.get(
         f"{base_url}/api/v1/finance-reports{path}",
+        headers=build_admin_headers(),
         params=params,
         timeout=30,
     )

@@ -301,11 +301,26 @@ def record_client_payment_transaction_with_cursor(cursor, client_payment_id, tra
     )
     if not prior_update["deposit_received_at"] and update["deposit_received_at"]:
         cursor.execute(
-            """UPDATE orders
-               SET status = '訂單成立'
-               WHERE case_no = %s AND status = '洽談中'""",
+            """SELECT l.id
+                 FROM caregiver_availability_locks l
+                 JOIN caregiver_matching_plans p ON p.id = l.plan_id
+                WHERE p.case_no = %s
+                  AND l.status = 'active'
+                  AND l.is_active = 1
+                LIMIT 1
+                FOR UPDATE""",
             (payment["case_no"],),
         )
+        active_lock = cursor.fetchone()
+        if active_lock is None:
+            cursor.execute(
+                """UPDATE orders
+                   SET status = '訂單成立'
+                   WHERE case_no = %s AND status = '洽談中'""",
+                (payment["case_no"],),
+            )
+        else:
+            update["awaiting_availability_lock_conversion"] = True
 
     total_receivable_val = payment.get("amount_receivable")
     if total_receivable_val is None:

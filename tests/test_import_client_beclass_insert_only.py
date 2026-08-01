@@ -34,7 +34,7 @@ class Cursor:
             self.current_query_no = params[0]
 
     def fetchone(self):
-        return (self.counts.get(self.current_query_no, 0),)
+        return {"existing_cnt": self.counts.get(self.current_query_no, 0)}
 
 
 class Connection:
@@ -71,6 +71,11 @@ def _patch_import(monkeypatch, frame, connection):
     monkeypatch.setattr(beclass.os.path, "exists", lambda _path: True)
     monkeypatch.setattr(beclass.pd, "ExcelFile", lambda _path: Workbook(frame))
     monkeypatch.setattr(beclass.pymysql, "connect", lambda **_kwargs: connection)
+    # These tests exercise insert-only import semantics. Alert persistence has
+    # dedicated service/integration coverage and needs a richer DB cursor.
+    monkeypatch.setattr(beclass, "upsert_system_alert", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(beclass, "resolve_if_exists", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(beclass, "delete_system_alert", lambda *_args, **_kwargs: False)
 
 
 def test_query_no_is_the_only_deduplication_key(monkeypatch):
@@ -87,7 +92,9 @@ def test_query_no_is_the_only_deduplication_key(monkeypatch):
     result = beclass.process_import("client-beclass.xlsx")
     statements = [sql for sql, _ in cursor.calls]
 
-    assert result == {"inserted": 1, "skipped_existing": 1, "review_required": 2, "failed": 0}
+    # The new record is inserted but also flagged because this deliberately
+    # minimal fixture omits required validation fields.
+    assert result == {"inserted": 1, "skipped_existing": 1, "review_required": 3, "failed": 0}
     assert not any(sql.startswith("UPDATE") for sql in statements)
     assert sum(sql.startswith("INSERT INTO beclass_records") for sql in statements) == 1
 

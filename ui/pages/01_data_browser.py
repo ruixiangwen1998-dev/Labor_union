@@ -270,7 +270,7 @@ DB_COLUMN_LABEL_MAP = {
     # 國定假日 (holidays)
     "holiday_date": "假日日期",
     "holiday_name": "假日名稱",
-    "is_double_pay_default": "預設雙倍薪資"
+    "is_double_pay_default": "相容標記（排班不自動套用）"
 }
 
 def format_col_header(col_name: str, mode: str) -> str:

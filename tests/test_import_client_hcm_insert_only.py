@@ -69,6 +69,11 @@ def _patch_import(monkeypatch, frame, connection):
     monkeypatch.setattr(hcm.os.path, "exists", lambda _path: True)
     monkeypatch.setattr(hcm.pd, "ExcelFile", lambda _path: Workbook(frame))
     monkeypatch.setattr(hcm.pymysql, "connect", lambda **_kwargs: connection)
+    # Keep this legacy import test focused on insert-only order/client writes.
+    # System-alert persistence is covered by its own service/integration tests.
+    monkeypatch.setattr(hcm, "upsert_system_alert", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(hcm, "resolve_if_exists", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(hcm, "delete_system_alert", lambda *_args, **_kwargs: False)
 
 
 def test_mixed_rows_only_insert_new_case_no(monkeypatch):
@@ -84,7 +89,9 @@ def test_mixed_rows_only_insert_new_case_no(monkeypatch):
     result = hcm.process_import("hcm.xlsx")
     statements = [sql for sql, _ in cursor.calls]
 
-    assert result == {"inserted": 1, "skipped_existing": 1, "review_required": 1, "failed": 0}
+    # The minimal new row is inserted and separately marked for field review;
+    # the row without a case number is also review-required.
+    assert result == {"inserted": 1, "skipped_existing": 1, "review_required": 2, "failed": 0}
     assert not any(sql.startswith("UPDATE") for sql in statements)
     assert sum(sql.startswith("INSERT INTO clients") for sql in statements) == 1
     assert sum(sql.startswith("INSERT INTO orders") for sql in statements) == 1
@@ -99,7 +106,7 @@ def test_new_order_dates_follow_client_service_date_and_service_rules(monkeypatc
     frame = pd.DataFrame([{
         "查詢序號(案件編號)": "new-001",
         "姓名": "新客戶",
-        "預計服務日期": "2026-08-01",
+        "預計服務日期": "2026/08/01",
         "希望服務天數": 3,
         "服務方式": "週休2日",
     }])

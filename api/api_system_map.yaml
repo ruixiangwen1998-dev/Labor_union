@@ -3,7 +3,9 @@ scope: api_layer
 modules:
   OrderRouter:
     type: api_router
-    description: 訂單、時程精算與明確多月嫂指派同步 API 路由；同步端點接收完整非取消訂單目標值，只委派已部署的 Preview／Apply 服務，不能直接寫入正式資料表。
+    description: 訂單、時程精算與明確多月嫂指派同步 API 路由；同步 Preview／Apply 均要求 system-admin，Apply
+      的 applied_by 必須等於 authenticated principal。`/full-details` 只接受不影響 assignment／schedule
+      的基本資料。
     source: api/routes/orders.py
     domain: API
     subsystem: null
@@ -13,6 +15,7 @@ modules:
     - OrderSchemas
     - OrderAssignmentSynchronizationPreviewService
     - OrderAssignmentSynchronizationApplyService
+    - AdminAuthorizationDependency
     input:
       case_no: path 中的 canonical order identifier。
       preview_request: 包含排班關鍵欄位與可編輯訂單主資料完整目標值的 order_change，以及完整明確 assignment_plan。
@@ -33,6 +36,11 @@ modules:
       讀取。
     - Router 不得建立第二個 FastAPI app 或重複註冊；必須沿用既有 `/api/v1/orders` router 與 BaseResponse
       包裝。
+    - Preview／Apply routes 都必須使用 `Depends(require_system_admin)`；Apply 只以 authenticated
+      principal 的 canonical username 委派 Service，client applied_by 不一致回 403。
+    - '`/full-details` 不得接受或寫入 service_days、service_hours_per_day、floor_fee、start/end/actual
+      dates 或 deposit_date；這些 staffing-sensitive 欄位只由 assignment-synchronization Preview／Apply
+      transaction 更新。'
     preferred_pattern: none
     verification:
     - command:
@@ -75,10 +83,11 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: api_layer
-    state: planned
-    fan_in_snapshot: 2
+    state: dirty
+    fan_in_snapshot: 5
     known_symbols:
     - apply_order_assignment_synchronization
+    - cancel_order_lock_for_case_no
     - get_all_orders
     - get_order_by_case_no
     - preview_order_assignment_synchronization
@@ -86,28 +95,78 @@ modules:
     - update_order_status
   MatchRouter:
     type: api_router
-    description: 案件與配對中心 API 路由。
+    description: 案件推薦、原配對紀錄、方案版本、active/contact state、逐段資訊／意願、共用履歷與取消方案 API。新方案動作委派
+      matching plan／communication Services；既有四步單月嫂端點委派 LegacyCaregiverMatchingService，不在
+      Router 直接查 DB。
     source: api/routes/matches.py
     domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
-    - DbService
     - MatchSchemas
-    input: {}
-    output: {}
+    - CaregiverMatchingPlanVersionService
+    - CaregiverMatchingCommunicationService
+    - LegacyCaregiverMatchingService
+    - AdminAuthorizationDependency
+    input:
+      matching_plan: path case_no，以及明確 1–4 segments、created_by、as_of。
+      matching_event: path case_no／plan_id／segment_id 與 event_key、actor、資訊種類／意願／共用履歷備註／取消原因。
+    output:
+      matching_plan_version: Service 回傳的 created 或 existing plan、version 與 segment
+        ownership。
+      matching_contact_state: active plan、逐段發送／意願／履歷狀態與 waiting-deposit lifecycle
+        snapshot。
     exceptions: []
-    invariants: []
+    invariants:
+    - 正式 matching plan 不得保存到 matching_records，亦不得呼叫 legacy assign_staff_to_order 建立正式
+      assignment。
+    - Router 不得直接讀寫 matching plan、segment、availability lock 資料表，或重做版本遞增、完整覆蓋、active
+      plan、active lock、交易與冪等邏輯。
+    - Service 的 created／existing、plan version 與 segment ownership 必須原樣回傳；不可將 existing
+      重包裝成新版本。
+    - 不得修改既有推薦、聯繫、履歷、LINE 發送與定案端點的 request／response 行為。
+    - '`POST /orders/{case_no}/matching-plans` 與 legacy 單月嫂 endpoints 都使用 require_system_admin；actor／created_by
+      不得冒用 authenticated principal。'
+    - matching plan 的 case not found 回 404、狀態或 lock 衝突回 409、request/domain validation
+      回 422、unexpected failure 才回不洩漏內部細節的固定 500。
+    - Router 不得取得 connection、執行 SQL 或直接 import DbService；legacy DB／LINE 相容行為只由 LegacyCaregiverMatchingService
+      擁有。
+    - 非預期錯誤不得向 API response 洩漏 SQL、連線或內部例外文字。
     preferred_pattern: none
-    verification: []
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_caregiver_matching_plan_router.py
+        - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-caregiver-matching-plan-router
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
     decisions: []
     todo: []
     checkpoint: []
     observability:
       mode: not_required
       signals: []
-    complexity: low
-    algorithm: []
+    complexity: medium
+    algorithm:
+    - POST /api/v1/orders/{case_no}/matching-plans 驗證 HTTP request shape 與 system-admin
+      principal；created_by 必須等於 principal，再將 canonical actor 與 case_no、segments、as_of
+      精確傳給 CaregiverMatchingPlanVersionService。
+    - 將 Service 回傳的 created 或 existing 結果包裝為既有 BaseResponse；不得自行重算 plan、version、availability
+      或 lock。
+    - active/contact state、information、willingness、resumes 與 cancel routes 分別委派 CaregiverMatchingCommunicationService
+      對應函式；mutation routes 以 `_require_matching_actor` 比對 authenticated principal
+      與 body.actor。
+    - legacy recommend-staff、matching_records、send-info-1/2、reply、send-resume 與 assign
+      endpoints 維持既有 request／response 行為，但一律委派 LegacyCaregiverMatchingService，供原四步單月嫂配對使用。
     idempotency:
       level: unknown
       side_effects: []
@@ -115,17 +174,206 @@ modules:
     required_context: []
     forbidden_context: []
     context_priority: {}
-    non_goals: []
+    non_goals:
+    - 不新增 router 檔、不修改 api/main.py、不建立 availability lock、正式 assignment、排班、休假、代班或薪資。
     sub_map: api_layer
-    state: validated
-    fan_in_snapshot: 0
+    state: dirty
+    fan_in_snapshot: 2
     known_symbols:
+    - _require_matching_actor
     - assign_staff_to_order
+    - cancel_matching_plan_route
+    - create_matching_plan_version_route
+    - get_active_matching_plan_state_route
+    - get_matching_plan_contact_state_route
     - recommend_staff
+    - record_matching_plan_willingness_route
     - reply_matching_inquiry
     - send_info_1
     - send_info_2
+    - send_matching_plan_information_route
+    - send_matching_plan_resumes_route
+    - send_resume_for_case
     - send_resume_to_client
+  CaregiverAvailabilityLockRouter:
+    type: api_router
+    description: 以三個明確管理端 mutation endpoint 薄層接線 availability lock 的確認鎖定、回復未綁定與訂金轉正式
+      assignment；訂單取消沿用既有 OrderRouter。
+    source: api/routes/caregiver_availability_locks.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - CaregiverAvailabilityLockAcquisitionService
+    - CaregiverAvailabilityLockReleaseService
+    - CaregiverAvailabilityLockConversionService
+    input:
+      acquisition: case_no、plan_id、event_key、actor。
+      release: case_no、plan_id、lock_id、event_key、actor、reason。
+      conversion: case_no、lock_id、event_key、actor、reason、assignment_terms。
+    output:
+      lifecycle_result: Service-owned created 或 existing 結果，包含穩定的 lock、plan、segment
+        與 assignment snapshots。
+    exceptions: []
+    invariants:
+    - Router 不得取得 DB connection、執行 SQL、commit、rollback 或建立 transaction。
+    - 不得複製 mutex、占用重查、append-only event、冪等或 lifecycle transition。
+    - API payload 不接受 status、plan ownership、staff ownership、lock state、historical
+      bypass、任意 table 或任意 service 名稱。
+    - case_no、plan_id 與 lock_id 必須由明確 path 指定，不得由姓名、legacy orders.staff_id 或 response
+      推測。
+    - Service 回傳的穩定 snapshot 不得由 Router 重新計算、重排或刪減。
+    - 訂單取消與 lock cancellation 必須繼續沿用既有 OrderRouter endpoint，不得在本 Router 新增第二條取消路徑。
+    - 非預期錯誤不得洩漏 SQL、連線或內部例外文字。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_caregiver_availability_lock_router.py
+        - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-caregiver-availability-lock-router
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: medium
+    algorithm:
+    - acquisition endpoint 驗證基本 request shape 後，精確委派 CaregiverAvailabilityLockAcquisitionService。
+    - release endpoint 驗證明確 lock ownership identifiers 與 reason 後，精確委派 CaregiverAvailabilityLockReleaseService。
+    - conversion endpoint 要求每個 segment 的 assignment_terms，精確委派 CaregiverAvailabilityLockConversionService，不自行補推費率、樓層費、staff
+      或日期。
+    - 三個 endpoint 各自包裝既有 Service 結果；不得以自由文字 action 參數共用單一動態 handler。
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals:
+    - 不修改 acquisition、release、cancellation 或 conversion service。
+    - 不新增通用 lock transaction service、動態 action endpoint、排班、休假、代班、付款或 UI 邏輯。
+    - 不修改 api/main.py；router registration 由後續既有 entrypoint 節點升級處理。
+    sub_map: api_layer
+    state: dirty
+    fan_in_snapshot: 2
+    known_symbols:
+    - AssignmentTerm._reject_float_money
+    - _require_actor
+    - _service_error
+    - _service_response
+    - acquire_availability_lock
+    - convert_availability_lock
+    - release_availability_lock
+  CaregiverSegmentAvailabilityRouter:
+    type: api_router
+    description: 提供正式管理員依洽談中案件搜尋連續月嫂候選的唯讀 API。公開多人 search 只接受 2／3／4 段；單月嫂完整期間 gate
+      使用獨立 caregiver-single-eligibility/check endpoint，segment_count=1 僅存在 Router
+      對 Service 的內部委派。
+    source: api/routes/caregiver_segment_availability.py::_as_iso_date,_value_to_status,_response_from_service,check_single_caregiver_eligibility,search_caregiver_segment_availability
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - CaregiverSegmentAvailabilityService
+    - AdminAuthorizationDependency
+    input:
+      http_method: POST。
+      path: /api/v1/orders/{case_no}/caregiver-segment-availability/search，及 /api/v1/orders/{case_no}/caregiver-single-eligibility/check。
+      case_no: 路徑案件編號，必須為非空字串。
+      body: CaregiverSegmentAvailabilitySearchRequest，精確包含 segment_count、ordered segment_drafts
+        與 as_of。
+      admin_principal: 由 require_system_admin 產生的可信 AdminPrincipal。
+    output:
+      response: BaseResponse[CaregiverSegmentAvailabilityResponse]。
+      data: 精確包含 case_no、planned_start_date、planned_end_date、feasibility、complete_combinations、segment_candidates、conflicts。
+    exceptions: []
+    invariants:
+    - Router 只能進行 Pydantic 驗證、正式管理員授權、一次 Service 委派、typed response 組裝與錯誤映射；不得 import
+      DbService、get_connection、執行 SQL、DML、commit、rollback、讀取 orders.staff_id 或呼叫 legacy
+      recommendation。
+    - endpoint 必須使用 Depends(require_system_admin) 或等價正式 dependency；X-Internal-API-Key
+      永遠必填，Bearer 只在 AdminAuthorizationDependency 明確允許的 development/test bypass 才可省略。401、403、503
+      必須由 dependency 原樣 fail-closed，不得在 router 內自行比對 header。
+    - request 與所有巢狀 request models 必須拒絕未知欄位；segment_drafts 必須保留輸入順序，不得排序、去重、補日期、交換日期或預選第一位月嫂。
+    - segment_count=1 是內部唯讀相容契約，只能由 caregiver-single-eligibility/check 用於判斷單月嫂是否完整覆蓋；API
+      client 與產品多人配對 UI 不得向公開多人 search 傳入 1。
+    - as_of 必須由 request 明確提供且只接受精確 YYYY-MM-DD；不得讓 Pydantic 先把 `YYYY-MM-DDT00:00:00`、datetime
+      或其他含時間值 coercion 成 date 後繞過驗證，也不得在 router 讀取 today、now 或伺服器時鐘補值。
+    - response models 必須禁止未宣告欄位並保留 Service 的穩定排序；feasibility 只允許 complete 或 partial，日期以
+      YYYY-MM-DD 序列化。
+    - 404 只用於案件不存在；409 只用於案件不再是洽談中；Pydantic 錯誤、案件日期不足與 Service validation error 使用
+      422；unexpected error 使用固定 500 detail。
+    - 驗收測試必須直接覆蓋：Service 參數與 call count 恰好一次；complete 與 partial 各自 HTTP 200 且 typed
+      data 完整；case not found 404；非洽談中 409；非法 segment_count、staff_id、日期、草稿順序、未知頂層與巢狀欄位各自
+      422；as_of／start_date／end_date 的含時間字串與 datetime 各自拒絕；unexpected exception 500
+      且不含原始訊息。
+    - 驗收測試必須覆蓋正式 auth 的 internal key 未設定 503、missing／wrong internal key、missing／expired
+      Bearer、角色不足與明確 development/test bypass；並由 OpenAPI 或獨立 FastAPI app 證明 path、request
+      與 response schema 正確。
+    - 以 source AST 或等價檢查證明 Router 不 import DB、不含 SQL／DML／transaction、不讀 orders.staff_id、不呼叫
+      legacy recommendation，且本節點不得修改 api/main.py。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_caregiver_segment_availability_router.py
+        - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-caregiver-segment-availability-router
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: medium
+    algorithm:
+    - 以檔案內 Pydantic models 宣告 request、segment draft、segment result、candidate、conflict
+      與 response；所有 request models 使用 extra=forbid，公開多人 request 的 segment_count 只允許
+      2、3、4。單人 gate request 只包含 start_date、end_date、as_of，由 Router 固定以 segment_count=1
+      委派 Service。
+    - 對 POST endpoint 套用 require_system_admin；將 path case_no 與 request 的 segment_count、ordered
+      segment_drafts、as_of 精確傳給 search_segmented_caregiver_availability，且每次 request
+      恰好呼叫一次。
+    - 將 Service 回傳內容建構為 typed response；complete 與 partial 均回 HTTP 200，partial 不得被轉成錯誤、清空
+      segment_candidates 或隱藏 conflicts。
+    - Service 的 case not found 映射 404、非洽談中映射 409，其餘 ValueError 映射 422；非預期例外只回固定 500
+      訊息，不得洩漏 SQL、connection、其他案件或內部例外文字。
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals:
+    - 不儲存 matching plan、履歷發送、意願、日期鎖、正式 assignment、排班、休假、代班或薪資。
+    - 不處理客戶確認、回復未綁定、取消釋放或訂金轉正式 assignment。
+    sub_map: api_layer
+    state: dirty
+    fan_in_snapshot: 3
   ScheduleRouter:
     type: api_router
     description: 月嫂服務人員行事曆與動態順延排班保存 API 路由。
@@ -304,7 +552,7 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: validated
-    fan_in_snapshot: 2
+    fan_in_snapshot: 3
     known_symbols:
     - get_all_staff
   HolidayRouter:
@@ -405,7 +653,7 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: planned
-    fan_in_snapshot: 0
+    fan_in_snapshot: 1
     known_symbols:
     - ClientTransactionCreate.notes_must_not_be_blank
     - backfill_client_payment_due_dates
@@ -654,9 +902,9 @@ modules:
     - resolve_alert
   FinanceRouterRegistration:
     type: api_entrypoint
-    description: Register contract, finance-report, finance-alert and multi-caregiver
-      schedule routers with the running FastAPI application；legacy payments router
-      不得再掛載。
+    description: Register contract, finance-report, finance-alert, multi-caregiver
+      schedule, caregiver segment availability and caregiver availability-lock routers
+      with the running FastAPI application；legacy payments router 不得再掛載。
     source: api/main.py
     domain: API
     subsystem: null
@@ -665,6 +913,8 @@ modules:
     - MultiCaregiverScheduleRouter
     - MultiCaregiverScheduleReadRouter
     - MultiCaregiverCaseAssignmentListRouter
+    - CaregiverSegmentAvailabilityRouter
+    - CaregiverAvailabilityLockRouter
     input: {}
     output: {}
     exceptions: []
@@ -677,6 +927,18 @@ modules:
       legacy schedule router 提供查詢。
     - multi_caregiver_case_assignments.router 必須只註冊一次；不得建立另一個 FastAPI app、重複 prefix
       或以 legacy 排班資料合成案件指派選單。
+    - caregiver_segment_availability.router 必須在 api.main import 並 include 恰好一次；不得建立第二個
+      FastAPI app、重複 prefix、包裝另一條未授權 route，或繞過 Router 既有 require_system_admin。
+    - 執行中 app 與 OpenAPI 必須恰有一個 POST `/api/v1/orders/{case_no}/caregiver-segment-availability/search`；不得只做文字
+      import 而未實際掛載，也不得因註冊改變 request/response schema。
+    - caregiver_availability_locks.router 必須在 api.main import 並 include 恰好一次；不得修改其
+      acquisition、release、conversion endpoint、認證 dependency 或建立第二個 lock router。
+    - 執行中 app 與 OpenAPI 必須各恰有一個 acquisition、release、conversion POST path；不得掛載 cancellation
+      path，訂單取消仍由既有 orders.router 擁有。
+    - 註冊後 endpoint 在 development/test bypass 仍必須要求 X-Internal-API-Key；正式 auth 的 401、403、503
+      邊界由已核准 Router/Dependency 保持，不得在 api.main 覆寫 dependency。
+    - 本節點只修改 api/main.py 的既有 imports 與 include_router 清單及必要測試；不得修改 CaregiverSegmentAvailabilityRouter、CaregiverAvailabilityLockRouter、Service、Helper、DB、其他既有
+      router prefix 或移除任何既有註冊。
     - api.main 不得 import 或 include legacy payments.router；`/api/v1/payments` 必須從 OpenAPI
       與執行中路由消失。
     - 'INV-START-01: 腳本必須使用 Python 輪詢確認 MySQL 連線已可被接受，始可開始啟動後端與監控服務防止連線逾時崩潰。'
@@ -685,14 +947,48 @@ modules:
     - command:
         argv:
         - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_caregiver_availability_lock_router_registration.py
+        - tests\test_caregiver_availability_lock_router.py
+        - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-caregiver-availability-lock-registration
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_caregiver_segment_availability_router_registration.py
+        - tests\test_caregiver_segment_availability_router.py
+        - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-caregiver-segment-availability-registration
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
         - -c
         - from pathlib import Path; s=Path('api/main.py').read_text(encoding='utf-8');
           assert 'contracts.router' in s and 'finance_reports.router' in s and 'finance_alerts.router'
           in s and 'multi_caregiver_schedule.router' in s and 'multi_caregiver_schedule_read.router'
-          in s and 'multi_caregiver_case_assignments.router' in s; assert s.count('app.include_router(finance_alerts.router)')
-          == 1; assert s.count('app.include_router(multi_caregiver_schedule.router)')
-          == 1; assert s.count('app.include_router(multi_caregiver_schedule_read.router)')
+          in s and 'multi_caregiver_case_assignments.router' in s and 'caregiver_segment_availability.router'
+          in s; assert s.count('app.include_router(finance_alerts.router)') == 1;
+          assert s.count('app.include_router(multi_caregiver_schedule.router)') ==
+          1; assert s.count('app.include_router(multi_caregiver_schedule_read.router)')
           == 1; assert s.count('app.include_router(multi_caregiver_case_assignments.router)')
+          == 1; assert s.count('app.include_router(caregiver_segment_availability.router)')
           == 1; print('ADMIN ROUTERS REGISTERED')
         cwd: project
         timeout: 60
@@ -715,7 +1011,7 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: api_layer
-    state: planned
+    state: dirty
     fan_in_snapshot: 0
     known_symbols:
     - _allowed_origins
@@ -724,27 +1020,56 @@ modules:
     - lifespan
   OrderSchemas:
     type: api_schema
-    description: 訂單完整更新、狀態更新與排班試算的 API 請求資料模型；訂金應收日期可空，客戶身分資格不屬於可提交訂單欄位。
+    description: 訂單完整更新、狀態更新、排班試算，以及單日與 atomic batch 休假／順延／代班 action 的強型別 API 請求資料模型；訂金應收日期可空，客戶身分資格不屬於可提交訂單欄位。
     source: api/schemas/orders.py
     domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies: []
-    input: {}
-    output: {}
+    input:
+      leave_resolution_preview: case_no、original_assignment_id、original_schedule_id、work_date、resolution_type、substitute_staff_id
+      leave_resolution_apply: Preview 欄位加 preview_fingerprint、event_key、actor、reason
+      batch_leave_resolution_preview: contract_version=`assignment-leave-substitution-batch-preview/v1`、case_no、original_assignment_id、非空
+        items
+      batch_leave_resolution_apply: contract_version=`assignment-leave-substitution-batch-apply/v1`、Preview
+        identity 欄位加 preview_fingerprint、batch_key、actor、reason
+    output:
+      request_models: 既有 AssignmentLeaveResolutionPreviewRequest／AssignmentLeaveResolutionApplyRequest，以及
+        AssignmentLeaveResolutionBatchPreviewRequest／AssignmentLeaveResolutionBatchApplyRequest
     exceptions: []
     invariants:
+    - 規格出處：`多月嫂排班UX改善討論紀錄.md`「每個休假日期各自選擇順延／代班」「代班時管理員必須明確選擇代班月嫂」「預覽仍須在後端完成檔期、區段、日排班、服務總量及鎖定檢查」；滿足
+      API 僅接收操作意圖、Server 自行推導 facts。
+    - 規格出處：2026-07-28 人工核准決策「歷史日期本身可修改，client 不得自報歷史可改狀態」；因此 schema 不提供 historical
+      bypass 欄位。
     - deposit_date 必須允許 null，且不得以今天或其他期款日期作為預設值。
     - 不得定義 clients.identity_status 或 identity_status 為可寫入的訂單 API 欄位。
     preferred_pattern: none
-    verification: []
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_assignment_rest_date_service.py
+        - -k
+        - leave_resolution_schema
+        - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-assignment-leave-schema
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
     decisions: []
     todo: []
     checkpoint: []
     observability:
       mode: not_required
       signals: []
-    complexity: low
+    complexity: medium
     algorithm: []
     idempotency:
       level: unknown
@@ -755,9 +1080,17 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: api_layer
-    state: planned
+    state: dirty
     fan_in_snapshot: 3
-    known_symbols: []
+    known_symbols:
+    - AssignmentLeaveResolutionApplyRequest.normalize_apply_text
+    - AssignmentLeaveResolutionBatchApplyRequest.normalize_batch_apply_text
+    - AssignmentLeaveResolutionBatchItem.validate_substitute_staff
+    - AssignmentLeaveResolutionBatchPreviewRequest.normalize_case_no
+    - AssignmentLeaveResolutionBatchPreviewRequest.validate_unique_items
+    - AssignmentLeaveResolutionPreviewRequest.normalize_case_no
+    - AssignmentLeaveResolutionPreviewRequest.validate_substitute_staff
+    - OrderLockCancellationRequest.normalize_required_text
   MatchSchemas:
     type: api_schema
     description: 媒合回覆與服務人員指派的 API 請求資料模型。
@@ -880,32 +1213,31 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: api_layer
-    state: planned
-    fan_in_snapshot: 1
+    state: dirty
+    fan_in_snapshot: 2
     known_symbols:
     - calculate_schedule
-  AssignmentScheduleRestDateRouter:
-    type: api_router
-    description: 以 assignment_id 為專屬單元之月嫂排休與順延完工日更新 API 路由。
-    source: api/routes/assignment_schedule_rest_dates.py
+  AssignmentLeaveResolutionExceptionHandler:
+    type: api_handler
+    description: 唯一集中映射 AssignmentLeaveResolutionDomainError；Router 不得捕捉後重包同一 typed
+      domain exception。
+    source: api/exception_handlers/assignment_leave_resolution.py::assignment_leave_resolution_exception_handler
     domain: API
     subsystem: null
     map_file: api\api_system_map.md
     dependencies:
     - AssignmentScheduleRestDateService
-    - OrderSchemas
     input:
-      http_method: PUT
-      path: /api/v1/assignment-schedules/{assignment_id}/rest-dates
-      assignment_id: 路徑參數 (int)。
-      body: 'AssignmentRestDatesUpdateRequest (含 rest_dates: list[str])。'
-      auth_context: 認證權限依賴 (security dependency)。
+      exception: AssignmentLeaveResolutionDomainError，包含 category、code、reason、details。
     output:
-      response: BaseResponse[Dict[str, Any]]。
+      response: BaseResponse-compatible failure 與 machine-readable detail；not_found=404、validation_error=422、conflict／locked=409。
     exceptions: []
     invariants:
-    - Router 只能進行輸入驗證、認證/授權檢查與委派，禁止直接執行 SQL 或商業邏輯。
-    - 必須將 Service 領域錯誤精準映射至 HTTP 狀態碼 (404, 409, 422, 500)。
+    - 正常business conflict result不進handler；blocked由Router投影409，requires_review／stale
+      confirmation依正常result contract投影，不得先轉exception。
+    - 只能依 exception category 映射；不得解析 reason、driver message 或 cause。未知 category fail
+      closed 為 422，並保留 stable code／reason／details。
+    - handler實作保持獨立模組並由application composition boundary註冊一次；Router不得catch後重包同型別，認證dependency既有401／403／503不受影響。
     preferred_pattern: none
     verification:
     - command:
@@ -914,7 +1246,13 @@ modules:
         - -m
         - pytest
         - tests/test_assignment_rest_date_service.py
+        - -k
+        - leave_resolution_exception_handler
         - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-assignment-leave-exception-handler
         cwd: project
         timeout: 60
         expect_exit: 0
@@ -923,9 +1261,11 @@ modules:
     todo: []
     checkpoint: []
     observability:
-      mode: not_required
-      signals: []
-    complexity: low
+      mode: required
+      signals:
+      - kind: log
+        name: leave_resolution_typed_exception_kind_code
+    complexity: medium
     algorithm: []
     idempotency:
       level: unknown
@@ -936,11 +1276,143 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: api_layer
-    state: planned
+    state: dirty
+    fan_in_snapshot: 1
+  AssignmentScheduleRestDateRouter:
+    type: api_router
+    description: 保留既有 assignment 排休更新與單日休假 action，並提供 atomic batch 休假順延／代班 Preview／Apply
+      強型別 action；單日與 Batch Preview／Apply 均要求正式 system-admin，Apply 另比對 actor。
+    source: api/routes/assignment_schedule_rest_dates.py
+    domain: API
+    subsystem: null
+    map_file: api\api_system_map.md
+    dependencies:
+    - AssignmentScheduleRestDateService
+    - OrderSchemas
+    - AssignmentScheduleLeaveSubstitutionPreviewOrchestration
+    - AssignmentScheduleLeaveSubstitutionApplyOrchestration
+    - AssignmentScheduleLeaveSubstitutionBatchPreviewOrchestration
+    - AssignmentScheduleLeaveSubstitutionBatchApplyOrchestration
+    - AdminAuthorizationDependency
+    - AssignmentLeaveResolutionExceptionHandler
+    input:
+      legacy_update: PUT /api/v1/assignment-schedules/{assignment_id}/rest-dates，body
+        為 AssignmentRestDatesUpdateRequest；既有語意必須保持相容。
+      leave_resolution_preview: POST /api/v1/assignment-schedules/{assignment_id}/rest-dates/leave-resolution/preview，body
+        為 AssignmentLeaveResolutionPreviewRequest。
+      leave_resolution_apply: POST /api/v1/assignment-schedules/{assignment_id}/rest-dates/leave-resolution/apply，body
+        為 AssignmentLeaveResolutionApplyRequest。
+      batch_leave_resolution_preview: POST /api/v1/assignment-schedules/{assignment_id}/rest-dates/leave-resolution/batch-preview，body
+        為 AssignmentLeaveResolutionBatchPreviewRequest。
+      batch_leave_resolution_apply: POST /api/v1/assignment-schedules/{assignment_id}/rest-dates/leave-resolution/batch-apply，body
+        為 AssignmentLeaveResolutionBatchApplyRequest。
+      auth_context: 單日與 Batch Preview／Apply 全部使用 Depends(require_system_admin)；Apply
+        另比對 actor。所有 action 的 path assignment_id 必須等於 body.original_assignment_id。
+    output:
+      legacy_response: BaseResponse[Dict[str, Any]]，維持既有 contract。
+      preview_response: 完整傳遞 Server canonical preview，含 ready／blocked／requires_review、preview_fingerprint、conflicts、assignment
+        impacts 與 requires_confirmation。
+      apply_response: 完整傳遞 applied／idempotent_replay 與 canonical event、assignment、schedule、actual-hours、payroll
+        snapshots。
+      batch_preview_response: 完整傳遞單一 aggregate ready／blocked／requires_review preview、canonical
+        items／ordinals 與單一 preview_fingerprint。
+      batch_apply_response: 完整傳遞 applied／idempotent_replay、batch header、依 ordinal
+        排序的逐日 events 與 canonical assignment／schedule／actual-hours／payroll snapshots。
+      error_response: 由AssignmentLeaveResolutionExceptionHandler統一產生typed machine-readable
+        detail；Router不產生技術錯誤response
+    exceptions: []
+    invariants:
+    - Router 只能進行輸入驗證、認證/授權檢查與委派，禁止直接執行 SQL 或商業邏輯。
+    - Preview 只能委派 AssignmentScheduleLeaveSubstitutionPreviewOrchestration；Apply 只能委派
+      AssignmentScheduleLeaveSubstitutionApplyOrchestration，不得在 Router 重算 Preview、fingerprint、歷史狀態、檔期、ownership、工時或薪資。
+    - Batch Preview 只能委派 AssignmentScheduleLeaveSubstitutionBatchPreviewOrchestration；Batch
+      Apply 只能委派 AssignmentScheduleLeaveSubstitutionBatchApplyOrchestration，不得逐項呼叫單日
+      endpoint／Service 或在 Router canonicalize、排序、去重、派生 ordinal／event_key。
+    - API client 不得提交 provisional plan、historical_fact_state、availability、lock、payroll、double-pay、ownership
+      或其他 Server facts。
+    - path assignment_id 與 body.original_assignment_id 不一致時回 422 且不得呼叫 Service。
+    - Apply body.actor 必須等於 authenticated principal 的 canonical identity；不一致回 403。認證
+      dependency 的 401／403／503 必須原樣傳遞。
+    - 單日 Preview 與 Batch Preview 必須和 Apply 一樣要求 require_system_admin；認證 dependency
+      的 401／403／503 原樣傳遞。
+    - Preview ready／requires_review 回 200，blocked 回 409；Apply applied／idempotent_replay
+      回 200。
+    - Batch Preview與Batch Apply的blocked／requires_review／stale confirmation是正常business
+      result；blocked回409並保留完整conflicts，requires_review與需重新confirmation的result不得建構exception。
+    - Preview canonical blocked 必須直接依 result.status 回 409 並保留完整 blocking_reasons 與
+      canonical facts；不得先改包成 DomainError。requires_review 必須維持 200。
+    - typed AssignmentLeaveResolutionDomainError 的 HTTP mapping 只能由集中 handler 擁有；Router
+      只允許處理 transport validation、正常 business result 與未型別化的 unexpected failure。
+    - malformed Server facts、dependency contract violation、DB或infrastructure failure不得降級為business
+      conflict或4xx。
+    - 錯誤回應必須保留 machine-readable status／reason，不得只回傳人類字串。
+    - 不得建立 transaction、commit、rollback、鎖資料，或建立／更新／取消 payment、settlement、assignment、schedule
+      或 event。
+    - 既有 legacy PUT 與單日 Preview／Apply paths、models、event_key、response 與錯誤映射必須保持不變；Batch
+      只能新增上述兩條明確 action paths。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests/test_assignment_rest_date_service.py
+        - -k
+        - leave_resolution_router
+        - -q
+        - -p
+        - no:cacheprovider
+        - --basetemp
+        - C:\tmp\pytest-assignment-leave-router
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: medium
+    algorithm:
+    - 保留 legacy PUT 的既有 FastAPI／Pydantic transport validation、Service status mapping
+      與 AssignmentScheduleRestDateService 委派。
+    - Preview endpoint 取得 system-admin principal、驗證 path assignment_id 等於 body.original_assignment_id，且只委派
+      AssignmentScheduleLeaveSubstitutionPreviewOrchestration。
+    - Apply endpoint 完成相同 path／body 驗證與 principal 取得，再驗證 body.actor 等於 principal canonical
+      identity，且只委派 AssignmentScheduleLeaveSubstitutionApplyOrchestration。
+    - Batch Preview 取得 system-admin principal並驗證 path assignment identity 後委派 BatchPreviewOrchestration；Batch
+      Apply 另比對 actor 後委派 BatchApplyOrchestration。
+    - Router 對 AssignmentLeaveResolutionDomainError 只原樣 re-raise，由 application composition
+      boundary 註冊的集中 handler 唯一映射；transport ValueError 與正常 business result 維持 route
+      contract。
+    - Router 不建立 transaction、不寫資料庫、不重算 Preview／fingerprint，也不自行處理 event-key 或 payroll。
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: api_layer
+    state: dirty
     fan_in_snapshot: 1
     known_symbols:
+    - _canonical_identity
+    - _error_payload
+    - _error_status_for_apply_error
+    - _error_status_for_apply_rejected
+    - _http_status_for_leave_preview
     - _http_status_for_service_result
     - _is_successful
+    - _require_matching_assignment_id
+    - apply_assignment_leave_resolution_batch_route
+    - apply_assignment_leave_resolution_route
+    - preview_assignment_leave_resolution_batch_route
+    - preview_assignment_leave_resolution_route
     - save_assignment_rest_dates
   StaffMonthlyCalendarScheduleRouter:
     type: api_router
@@ -1024,15 +1496,14 @@ modules:
         argv:
         - .venv\Scripts\python.exe
         - -m
-        - pytest
-        - tests/test_match_record_service.py
-        - -q
+        - py_compile
+        - api/routes/match_records.py
         cwd: project
         timeout: 60
         expect_exit: 0
-        expect_stdout_contains: passed
     decisions: []
-    todo: []
+    todo:
+    - 新增以 fake service 驗證路由委派與錯誤映射的可重複 pytest；已移除 configured DB 整合測試。
     checkpoint: []
     observability:
       mode: not_required
@@ -1049,7 +1520,7 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: planned
-    fan_in_snapshot: 1
+    fan_in_snapshot: 0
     known_symbols:
     - create_or_get_match_record
     - get_order_matches
@@ -1174,7 +1645,7 @@ modules:
     non_goals: []
     sub_map: api_layer
     state: planned
-    fan_in_snapshot: 9
+    fan_in_snapshot: 13
     known_symbols:
     - admin_auth_is_enabled
     - get_bearer_token

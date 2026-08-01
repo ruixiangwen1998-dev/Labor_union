@@ -11,7 +11,7 @@ modules:
     dependencies:
     - DataBrowserUI
     - OrderUI
-    - CalendarUI
+    - MultiCaregiverSchedulingPageUI
     - FormManagementUI
     - FinanceAlertCenterUI
     - LineManagementUI
@@ -158,7 +158,7 @@ modules:
     non_goals: []
     sub_map: ui_layer
     state: validated
-    fan_in_snapshot: 2
+    fan_in_snapshot: 3
     known_symbols:
     - admin_auth_is_bypassed
     - build_admin_headers
@@ -167,14 +167,13 @@ modules:
     - resolve_internal_api_key
   OrderUI:
     type: ui_page
-    description: Page 2 訂單與帳務管理頁的殼層；建立固定順序的五個 Tab，並將已載入資料分派至各自的 renderer。
+    description: Page 2 訂單與帳務管理頁的殼層；建立固定順序的四個 Tab，配對與正式人力配置已移至 MultiCaregiverSchedulingPageUI。
     source: ui/pages/02_orders.py::_render_order_page_shell
     domain: UI
     subsystem: null
     map_file: ui\ui_system_map.md
     dependencies:
     - OrderUI_Tab1_Overview
-    - OrderUI_Tab2_Assign
     - OrderUI_Tab3_Finance
     - AccountsPayableExportUI
     - SubsidyReconciliationRegisterUI
@@ -183,13 +182,15 @@ modules:
       clients: 已載入的客戶資料。
       staff_list: 已載入的服務人員資料。
     output:
-      page2_tabs: 依序渲染的訂單總覽、配對、帳務總覽、應付帳款與核銷補助 Tab。
+      page2_tabs: 依序渲染訂單總覽、帳務總覽、應付帳款與核銷補助四個 Tab。
     exceptions: []
     invariants:
     - 'INV-UI-01: 所有費用與金額數字統一無條件四捨五入整數化呈現 (帶千分位)，無小數點。'
     - 'INV-UI-02: 必須透過 safe_int() 轉換數值，防範 NaN, None, Inf 及空字串導致的 ValueError 崩潰。'
-    - 必須固定建立五個 Tab，且依序分派 OrderUI_Tab1_Overview, OrderUI_Tab2_Assign, OrderUI_Tab3_Finance,
-      AccountsPayableExportUI 與 SubsidyReconciliationRegisterUI。
+    - 必須固定建立四個 Tab，且依序分派 OrderUI_Tab1_Overview、OrderUI_Tab3_Finance、AccountsPayableExportUI
+      與 SubsidyReconciliationRegisterUI。
+    - 不得渲染 LegacySingleCaregiverMatchingRenderer、正式 assignment 配置或 assignment-synchronization
+      Preview／Apply；這些入口只屬 MultiCaregiverSchedulingPageUI。
     - 不得直接讀取資料庫或帳務 API；資料載入只屬於 Page2TabNavigation，帳務寫入只屬於 PaymentManagementUI。
     preferred_pattern: none
     verification:
@@ -286,7 +287,7 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: ui_layer
-    state: planned
+    state: dirty
     fan_in_snapshot: 1
   OrderUIDerivedDateHelpers:
     type: function
@@ -334,17 +335,19 @@ modules:
     sub_map: ui_layer
     state: planned
     fan_in_snapshot: 0
-  OrderUI_Tab2_Assign:
+  LegacySingleCaregiverMatchingRenderer:
     type: ui_component
-    description: Tab 2 渲染函數 (案件與配對中心)。僅列出「洽談中」待配對案件，提供單筆案件控制面板、4 大智慧粗篩可選條件與 4 步智慧配對流程；排休更新必須綁定
-      assignment_id 專屬 API。
-    source: ui/pages/order/tab2_assign.py::_render_tab2_assign,_api_request,_build_sync_request,_iso_date_text,_parse_iso_date
+    description: 洽談中案件的原四步單月嫂配對相容 renderer；live module path 保留 tab2_assign 以維持匯入相容，但唯一產品
+      owner 是 MultiCaregiverMatchingCenterUI。先由專用單月嫂 eligibility endpoint 判斷是否存在完整期間候選，只有明確無完整單月嫂組合時才委派多段
+      renderer。
+    source: ui/pages/order/tab2_assign.py::_render_tab2_assign,_api_request,_build_sync_request,_single_caregiver_covers_service_period,_iso_date_text,_parse_iso_date
     domain: UI
     subsystem: null
     map_file: ui\ui_system_map.md
     dependencies:
-    - AssignmentScheduleRestDateRouter
-    - MatchRecordRouter
+    - CaregiverSegmentAvailabilityRouter
+    - MatchRouter
+    - OrderRouter
     input: {}
     output: {}
     exceptions: []
@@ -352,10 +355,14 @@ modules:
     - 'INV-UI-ASSIGN-01: 媒合紀錄清單僅能顯示至少有一項發送紀錄 (sent_info_1_at/sent_info_2_at) 或意願已變更的有效紀錄。'
     - 'INV-UI-ASSIGN-02: 選取月嫂檢視時嚴禁 speculative 預先建立 DB 紀錄，必須在點擊發送/變更動作時按需 (On-Demand)
       建立。'
-    - 案件選單與摘要的身分資格只能顯示 clients.identity_status；不得讀取或顯示 clients.identity_status。
-    - 排休與動態順延保存必須透過 API 呼叫 `PUT /api/v1/assignment-schedules/{assignment_id}/rest-dates`，嚴禁呼叫或衍生已停用/危險之
-      `PUT /api/v1/orders/{case_no}/rest-dates` 端點。
-    - Page2TabNavigation (Tab導覽選單) 必須單獨保留、單獨維護與審查，不得將本 UI 與其他 UI 混合變更。
+    - 單月嫂 gate 必須呼叫 caregiver-single-eligibility/check 專用 endpoint，並以案件完整起訖與 complete_combinations
+      判斷；segment_count=1 只存在於 API/Service 內部相容層，不得由產品 UI 傳入。
+    - 多段 renderer 只在 single_caregiver_available 明確為 false 時顯示；2／3／4 段 UI 不得與原四步單月嫂流程同時出現。
+    - '`_build_sync_request` 將空白 deposit_date 正規化為 null；空白 actual_start_date／actual_end_date
+      分別回退 start_date／end_date，避免把空字串送入 date schema。'
+    - 案件選單與摘要只顯示 API 投影的 identity_status；不得直接查詢或修改 clients.identity_status，亦不得把 identity_status
+      送入 assignment-synchronization request。
+    - 本 renderer 不再由 OrderUI 或 Page2TabNavigation 呼叫；唯一產品入口是 MultiCaregiverMatchingCenterUI。
     preferred_pattern: none
     verification:
     - command:
@@ -364,6 +371,7 @@ modules:
         - -m
         - pytest
         - tests/test_order_assign_identity_status_ui.py
+        - tests/test_multi_caregiver_scheduling_ui_shell.py
         - -q
         - -p
         - no:cacheprovider
@@ -390,8 +398,8 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: ui_layer
-    state: validated
-    fan_in_snapshot: 1
+    state: planned
+    fan_in_snapshot: 2
   OrderUI_Tab3_Finance:
     type: ui_component
     description: Tab 3 渲染函數 (訂單帳務總覽)，以及將日期型別正規化為 Streamlit Arrow 相容標量的私有 helper。獨立顯示客戶收款與月嫂應付總覽兩張表格，按案件懶加載交易明細，所有帳務寫入僅經由
@@ -443,18 +451,24 @@ modules:
     fan_in_snapshot: 1
   CalendarUI:
     type: ui_page
-    description: 服務人員行事曆與檔期調控獨立頁面。由 StaffMonthlyCalendarScheduleRouter 載入月度檔期視圖，提供多月嫂案件→正式服務指派選擇、指派專屬日排班呈現與單日調整。
-    source: ui/pages/03_calendar.py::show,safe_float,safe_int,safe_date,_multi_caregiver_request,_multi_caregiver_error,_render_multi_caregiver_panel,_coerce_iso_date_strict,_coerce_staff_id,_extract_case_assignments_for_staff,_parse_stored_rest_dates
+    description: 服務人員月曆分頁。由 StaffMonthlyCalendarScheduleRouter 載入單月 assignment／等待訂金鎖占用；出勤精算時沿用上方已選案件與該月嫂的正式
+      assignment，提供多日期休假逐筆順延／代班 Preview、調整前後與阻擋原因、確認後 atomic Apply。原「多月嫂指派排班」案件→指派功能模塊已從
+      live code 移除。
+    source: ui/pages/03_calendar.py::_render_staff_calendar,_render_assignment_leave_resolution,safe_float,safe_int,safe_date,_normalise_calendar_schedule_map,_multi_caregiver_request,_current_admin_actor,_calendar_has_unsaved_leave_changes,_discard_calendar_leave_drafts,_multi_caregiver_error,_coerce_iso_date_strict,_coerce_staff_id,_extract_case_assignments_for_staff
     domain: UI
     subsystem: null
     map_file: ui\ui_system_map.md
     dependencies:
     - StaffMonthlyCalendarScheduleRouter
     - HolidayRouter
+    - StaffRouter
+    - OrderRouter
+    - OrderScheduleCalculationRouter
     - UIAdminApiContext
     - MultiCaregiverCaseAssignmentListRouter
     - MultiCaregiverScheduleReadRouter
     - MultiCaregiverScheduleRouter
+    - AssignmentScheduleRestDateRouter
     input: {}
     output: {}
     exceptions: []
@@ -467,15 +481,25 @@ modules:
     - 'INV-CAL-04 (綠底休假與動態順延): 每增加 1 天綠底 🟢 休假，後續紅底 🔴 工作日與服務結束日 (actual_end_date) 自動向後動態順延
       1 天，確保實際服務天數 100% 足額達 N 天。'
     - 'INV-CAL-05 (國定假日單日獨立決策): 支援連假期間針對每一個獨立國定假日進行單日個體勾選；選擇放假者在月曆標示為綠底 🟢 且完工日順延 1
-      天，選擇上班者計為紅底 🔴 正常工作日 (預設雙倍薪資)。'
+      天，選擇上班者計為紅底 🔴 正常工作日，`is_double_pay` 一律預設 false。國定假日不得自動加倍；只有個別案件另有明確約定時，才能人工指定
+      assignment-owned 排班日加倍並留下備註。'
     - '月嫂月度檔期視圖必須經由 REST API (`StaffMonthlyCalendarScheduleRouter`: GET /api/v1/staff/{staff_id}/monthly-schedule)
       讀取，嚴禁在 UI 層直接執行 Python SQL 語法進行查詢。'
+    - 上個月／下個月／回到本月與年月直選必須共用單一 view state；畫面「正在查看」標題及兩個 selectbox 必須永遠顯示同一年月。
+    - API JSON 的 schedule_map 日期鍵必須先正規化為整數日再查詢；同一日已有正式 assignment 工作列時不得同時顯示「可接案」。
+    - 與當月正式 assignment 日列有關的已完成訂單必須保留在出勤精算訂單選單，並以唯讀歷史模式呈現，不得允許修改已完成資料。
     - 國定假日必須經由 `HolidayRouter` 的 GET `/api/v1/holidays` 讀取，並使用 `UIAdminApiContext`
       產生的正式 headers；缺少 internal service key 或正式模式管理員 session 時必須停止該請求，不得裸送或偽造權限。
-    - 多月嫂模式必須先選 case_no、再從該案件 API 回傳的正式指派中選 assignment_id；不得由 orders.staff_id、日期或姓名推測指派。
-    - 多月嫂模式只透過 MultiCaregiverCaseAssignmentListRouter、MultiCaregiverScheduleReadRouter
-      與 MultiCaregiverScheduleRouter 讀寫；不得呼叫 legacy 排班 helper。
-    - 不提供同日分時段、planned_hours 或 actual_hours 手動輸入；單日請假不自動延伸、覆寫或移動下一位月嫂的服務區段。
+    - 月曆只依已選月嫂與案件 API 回傳的未取消正式 assignments 篩選 assignment_id；不得由 orders.staff_id、日期或姓名推測正式歸屬。
+    - 休假草稿每個日期都必須明確選擇順延或代班，代班必填 substitute_staff_id；同次多日期只送一份 batch-preview、一個 preview_fingerprint
+      與一個 batch-apply。
+    - Preview 必須顯示 service_plan_transition.before／after 與 canonical blocking diagnostics；只有管理員填寫原因並確認後才能
+      Apply，取消或切換前的草稿不得寫入正式排班。
+    - 不得直接呼叫 legacy `PUT /rest-dates` 保存休假；正式休假／順延／代班只能透過 AssignmentScheduleRestDateRouter
+      的 batch Preview／Apply。
+    - 不提供同日分時段、planned_hours 或 actual_hours 手動輸入；不得在未經 Preview／Apply 時直接改寫下一位月嫂區段。
+    - Preview 必須顯示同案所有有效 assignment 的 actual_hours 加總、訂單計畫時數與差額；不足或超額時 Apply 不可操作。成功
+      Apply 後薪資依正式排班自動計算，UI 不另提供薪資確認時間或按鈕。
     preferred_pattern: none
     verification:
     - command:
@@ -493,7 +517,10 @@ modules:
         - -m
         - pytest
         - tests\test_calendar_ui_explicit_errors.py
+        - tests\test_multi_caregiver_scheduling_ui_shell.py
         - -q
+        - -p
+        - no:cacheprovider
         cwd: project
         timeout: 60
         expect_exit: 0
@@ -515,12 +542,195 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: ui_layer
-    state: validated
+    state: dirty
+    fan_in_snapshot: 1
+  MultiCaregiverSchedulingPageUI:
+    type: ui_page
+    description: 多月嫂排班產品入口；主 app 動態導覽與 Streamlit `/calendar` 直接入口共用同一個 `show()`，只建立「服務人員月曆／月嫂配對中心／案件人力配置」三個固定分頁並委派各自
+      renderer；不在分頁間搬移或重建正式資料。
+    source: ui/pages/03_calendar.py::show
+    domain: UI
+    subsystem: null
+    map_file: ui\ui_system_map.md
+    dependencies:
+    - CalendarUI
+    - MultiCaregiverMatchingCenterUI
+    - MultiCaregiverCaseStaffingUI
+    - UIAdminApiContext
+    input: {}
+    output: {}
+    exceptions: []
+    invariants:
+    - 固定且僅能建立三個產品分頁，順序為服務人員月曆、月嫂配對中心、案件人力配置。
+    - 月嫂配對中心的 orders／staff 初始資料只經管理端 API 載入；任一載入失敗必須顯示錯誤，不得 fallback 直連資料庫。
+    - 服務人員月曆不得渲染已移除的「多月嫂指派排班」案件→指派功能模塊。
+    - 主 app radio 與 Streamlit `/calendar` route 必須顯示相同三分頁；直接入口由 module 的 `__main__`
+      entrypoint 呼叫 `show()`，不得建立第二份頁面流程。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_multi_caregiver_scheduling_ui_shell.py
+        - -q
+        - -p
+        - no:cacheprovider
+        cwd: project
+        timeout: 60
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: ui_layer
+    state: planned
+    fan_in_snapshot: 1
+  MultiCaregiverMatchingCenterUI:
+    type: ui_component
+    description: 月嫂配對中心。完整重用 LegacySingleCaregiverMatchingRenderer 的原四步單月嫂配對；只有專用單月嫂
+      eligibility 查詢明確回傳無完整期間組合時才顯示 2／3／4 段多人 fallback，並接續方案版本、逐位資訊／意願、共用履歷、等待訂金鎖定／回復與訂金轉正式
+      assignment。development／dev／local／test 環境另提供無寫入的多人介面測試預覽，便於驗證 fallback UI，但不改變正式自動
+      gate。
+    source: ui/pages/scheduling/matching_center.py::_request,_as_date,_actor,_render_multi_segment_matching,render_matching_center
+    domain: UI
+    subsystem: null
+    map_file: ui\ui_system_map.md
+    dependencies:
+    - LegacySingleCaregiverMatchingRenderer
+    - CaregiverSegmentAvailabilityRouter
+    - MatchRouter
+    - CaregiverAvailabilityLockRouter
+    input: {}
+    output: {}
+    exceptions: []
+    invariants:
+    - 單月嫂可完整承接時只顯示原四步機制；查詢失敗不得視為無人符合，2／3／4 段入口不得出現。
+    - 非 production 環境可明確開啟「測試顯示多月嫂配對」；此預覽只能查詢最新檔期及編輯 2／3／4 段草稿，聯繫按鈕必須 disabled，且不得建立方案、鎖定檔期或發送聯繫／履歷。
+    - 多段預設 2 段、最多 4 段；草稿可暫時不完整，重新查詢後必須保留 partial candidates、未覆蓋日期、衝突 staff/date/reason。
+    - 每位月嫂只能被選入一段；候選依目前段日期與已選月嫂在已載入結果本機重篩，並保留「重新查詢最新檔期」操作。
+    - 聯繫、資訊-1、資訊-2、意願與履歷為獨立動作；方案建立及每次發送都由 server 重新驗證最新檔期。多段履歷按鈕保持可操作，但未全員願意時 server
+      必須拒絕實際發送並回報未同意區段。
+    - 等待訂金 lock、回復未綁定及轉正式只能呼叫固定 lifecycle endpoints；UI 不得自行建立 assignment、排班或推導 segment
+      費率。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_multi_caregiver_scheduling_ui_shell.py
+        - tests\test_caregiver_matching_plan_router.py
+        - tests\test_caregiver_availability_lock_router.py
+        - -q
+        - -p
+        - no:cacheprovider
+        cwd: project
+        timeout: 120
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: ui_layer
+    state: dirty
+    fan_in_snapshot: 1
+  MultiCaregiverCaseStaffingUI:
+    type: ui_component
+    description: 案件人力配置。只列訂單成立／服務中案件，以 1–4 行編輯完整正式 assignment 目標計畫；減少行數只顯示取消候選，必須先顯示調整前／後、排班移除與阻擋原因，再由管理員確認後呼叫同步
+      Apply。未建立正式 assignment 的未來 legacy 案件可用 orders.staff_id 作為首次 UI 建議值，但只有 Apply
+      成功後建立的 case_staff_assignments 才是正式 ownership。
+    source: ui/pages/scheduling/case_staffing.py::_request,_date_value,render_case_staffing
+    domain: UI
+    subsystem: null
+    map_file: ui\ui_system_map.md
+    dependencies:
+    - OrderRouter
+    - StaffRouter
+    - MultiCaregiverCaseAssignmentListRouter
+    - LegacySingleCaregiverMatchingRenderer
+    input: {}
+    output: {}
+    exceptions: []
+    invariants:
+    - 預設行數為目前未取消 assignment 數量（最少 1、最多 4），一行只代表一個 assignment；同一月嫂不連續期間不得在 UI 自動合併。
+    - 空白 deposit_date 必須送 null，空白 actual dates 必須由共用 `_build_sync_request` 回退 planned
+      dates，不得把空字串送入日期 schema。
+    - 現況無正式 assignment 時，legacy orders.staff_id 只能一次性預填第一段候選，不得顯示為既有正式配置、不得略過 Preview／Apply，也不得作為排班或薪資
+      ownership。
+    - '`sync_status=requires_allocation` 時 UI 必須顯示目標時數、提議 actual_hours、差額與調整指引，並停止渲染
+      Apply 操作；只有 `in_sync` 且無 blocking_reasons 時才能確認套用。'
+    - Preview request 變更後舊結果立即失效；調整前、調整後、required_schedule_removals 與 blocking_reasons
+      必須在 Apply 前顯示。
+    - 阻擋原因非空時不得 Apply；成功 Apply 必須包含完整 removal ids、非空 actor 並清除舊 preview state。
+    - 取消調整只清除 UI 草稿，不得修改正式 assignment 或 staff_schedule。
+    preferred_pattern: none
+    verification:
+    - command:
+        argv:
+        - .venv\Scripts\python.exe
+        - -m
+        - pytest
+        - tests\test_multi_caregiver_scheduling_ui_shell.py
+        - tests\test_order_assignment_synchronization_router.py
+        - -q
+        - -p
+        - no:cacheprovider
+        cwd: project
+        timeout: 120
+        expect_exit: 0
+        expect_stdout_contains: passed
+    decisions: []
+    todo: []
+    checkpoint: []
+    observability:
+      mode: not_required
+      signals: []
+    complexity: low
+    algorithm: []
+    idempotency:
+      level: unknown
+      side_effects: []
+    retry_budget: 0
+    required_context: []
+    forbidden_context: []
+    context_priority: {}
+    non_goals: []
+    sub_map: ui_layer
+    state: dirty
     fan_in_snapshot: 1
   EditOrderUI:
     type: ui_component
-    description: 單筆訂單 38 欄位動態試算與資料維護頁面。採用 st.columns 與帶邊框 Container 打造實體訂單單據視覺，具備
-      Formula Lock Guardrail，以及訂單變更→完整月嫂指派→帳務／排班預覽→明確套用的一致性工作流。
+    description: 單筆訂單基本資料與動態試算維護頁。正式月嫂、assignment、服務區段、換人、排班移除與同步 Preview／Apply 已移至
+      MultiCaregiverSchedulingPageUI；本頁只保存基本訂單資料與既有訂單狀態／取消動作。
     source: ui/pages/order/editor.py::render_editor
     domain: UI
     subsystem: null
@@ -528,31 +738,25 @@ modules:
     dependencies:
     - OrderRouter
     - OrderScheduleCalculationRouter
-    - MultiCaregiverCaseAssignmentListRouter
-    - StaffRouter
+    - ClientPaymentRouter
     input:
-      editable_order_change: 非取消訂單的完整訂單目標值，含排班關鍵欄位與客戶／訂單主資料。
-      assignment_plan: 使用者明確建立或調整的完整正式月嫂服務區段；既有有效指派未列入時，UI 必須明示其為取消候選。
-      applied_by: 非空操作識別；不得從月嫂姓名、訂單欄位或預設值推測。
+      editable_order_change: 訂單基本欄位與 UI 即時計算所需值，不含 assignment_plan、schedule_change_plan
+        或 applied_by。
     output:
-      synchronization_preview: target_hours、差額、required_schedule_removals、帳務鎖定或人工覆核原因。
-      synchronization_apply_result: 成功套用後的正式指派與排班摘要，並觸發訂單頁重新載入。
+      basic_order_update: 經 `/full-details` 保存的訂單基本資料結果。
     exceptions: []
     invariants:
     - 'INV-EDIT-01: 修改輸入欄位時，費用與完工日必須即時連動試算，且金額統一無小數點 safe_int 呈現。'
     - 'INV-EDIT-03: 所有由公式自動衍生之金額與時數欄位，預設必須為唯讀鎖定狀態。'
     - 'INV-EDIT-04: 強制解鎖自動試算欄位時，必須顯性跳出警告告知公式連動失效風險。'
     - 服務人員付款日與補助退款日必須依服務結束日及身分資格推導，並在「五、實收對帳、狀態與備註登錄區」以唯讀鎖定欄位顯示；不得寫入訂單或帳務資料。
-    - 'INV-EDIT-05: 任何含 service_days、service_hours_per_day、start_date、end_date、actual_start_date
-      或 actual_end_date 的訂單變更，必須只經 OrderRouter 的 preview／apply 同步流程；不得先呼叫 db_service.update_order_full_details
-      或 `/full-details`。'
-    - 必須呼叫 `OrderScheduleCalculationRouter` (POST /api/v1/orders/schedule-calculation)
-      進行出勤排班與完工日順延試算。
-    - 補助資格只能以 clients.identity_status 唯讀呈現；UI 不得提供修改控制項、不得傳送 identity_status 或 clients.identity_status，也不得讀取
-      clients.identity_status。
-    - 訂金應收日期可為空值，空值不得以今天或第一期應收日自動補值；送出同步請求時須保留 null。
-    - 多月嫂正式指派只能由 case_no 的正式指派 API 建立或選取；不得由 orders.staff_id、媒合紀錄、姓名、日期或列表第一筆推測。
-    - apply 前必須明確呈現並確認 required_schedule_removals；遇帳務鎖定、人工時數覆寫或時數差額時，不得繞過、靜默降級或顯示成功。
+    - 本頁的 `/full-details` 只保存 client_name；服務日期、服務天數、每日時數、樓層費與訂金日期皆為唯讀，正式人力與排班敏感變更只由案件人力配置的
+      assignment-synchronization Preview／Apply 處理。
+    - 必須呼叫既有 `OrderScheduleCalculationRouter` 的 calculate-schedule endpoint 進行表單內試算，不得在
+      UI 直接執行 SQL。
+    - 補助資格只能使用訂單 API 投影的 identity_status 唯讀呈現；UI 不得提供修改控制項或傳送 identity_status。
+    - 訂金應收日期可為空值，空值不得以今天或第一期應收日自動補值。
+    - 本頁不得呈現 assignment_plan、required_schedule_removals、applied_by、換月嫂或正式同步控制項。
     - 帳務仍由新帳務介面獨立處理；本頁不得建立、調整或取消 client／staff payments、月結或轉帳。
     preferred_pattern: none
     verification:
@@ -579,12 +783,8 @@ modules:
       signals: []
     complexity: medium
     algorithm:
-    - 讀取目前案件的 clients.identity_status 並以唯讀欄位顯示，要求使用者提交完整 assignment_plan；不得以 orders.staff_id、媒合紀錄或第一筆候選推測指派。
-    - 對 OrderScheduleCalculationRouter 送出排班與順延試算請求，對 OrderRouter preview 送出完整訂單目標值與指派計畫，清楚呈現時數差額、鎖定原因及
-      required_schedule_removals。
-    - 「確定儲存」先要求有效且未過期的 preview；僅當 preview 可套用時，要求使用者逐筆明確確認全部 required_schedule_removals
-      與非空 applied_by，再呼叫 OrderRouter apply；HTTP 409／422 必須顯示原始原因而非呈現成功。
-    - apply 成功後清除本頁同步草稿並 rerun 重新讀取訂單；CalendarUI 下次顯示時由正式指派與日排班 API 重新讀取，不保留舊排班快取。
+    - 讀取 API 投影的 identity_status 並以唯讀欄位顯示，透過 OrderScheduleCalculationRouter 提供表單內動態日期／金額試算。
+    - 「儲存訂單基本資料」只呼叫 OrderRouter `/full-details`；正式月嫂與排班提示使用者前往 MultiCaregiverSchedulingPageUI。
     idempotency:
       level: unknown
       side_effects: []
@@ -594,7 +794,7 @@ modules:
     context_priority: {}
     non_goals: []
     sub_map: ui_layer
-    state: planned
+    state: dirty
     fan_in_snapshot: 1
   EditOrderDerivedDateHelpers:
     type: function
@@ -965,8 +1165,8 @@ modules:
     fan_in_snapshot: 0
   Page2TabNavigation:
     type: ui_page
-    description: Page 2 的入口；只經既有 FastAPI 載入 orders 與 staff，使用空 clients 清單作為既有 OrderUI
-      介面的暫時相容橋接，並處理初始化錯誤後將資料交給 OrderUI 殼層渲染。
+    description: Page 2 的入口；只經既有 FastAPI 載入 orders 與 staff，使用空 clients 清單作為既有函式簽名相容橋接，並處理初始化錯誤後將資料交給不含配對
+      Tab 的 OrderUI 四分頁殼層。
     source: ui/pages/02_orders.py::show
     domain: UI
     subsystem: null
@@ -1026,11 +1226,11 @@ modules:
     forbidden_context: []
     context_priority: {}
     non_goals:
-    - 不修改 OrderUI 或 OrderUI_Tab2_Assign 的函式簽名；clients=[] 只是本輪原子遷移的相容橋接。
-    - 不修改配對中心內部的 DbService 呼叫；該範圍屬後續 OrderUI_Tab2_Assign 節點。
-    - 不新增或修改 API Router、Service、Tab 3、Tab 4 或 Tab 5。
+    - 不渲染或呼叫 LegacySingleCaregiverMatchingRenderer；配對中心只由 MultiCaregiverSchedulingPageUI
+      擁有。
+    - 不新增或修改 API Router、Service、帳務總覽、應付帳款或補助核銷 renderer。
     sub_map: ui_layer
-    state: planned
+    state: dirty
     fan_in_snapshot: 0
   PaymentManagementUI:
     type: ui_page

@@ -1,5 +1,52 @@
 # UI_CHANG 變更說明
 
+## 2026-07-31 待推送變更
+
+### 多月嫂排班 UX
+
+- 將多月嫂排班集中為「服務人員月曆」、「月嫂配對中心」與「案件人力配置」三個固定分頁；服務人員月曆不再顯示案件指派功能。
+- 服務人員月曆補上目前瀏覽月份、上／下月與回到本月操作；同日多筆案件逐筆顯示，不再以「可接案」覆蓋正式訂單資訊。
+- 月嫂配對中心保留原本單月嫂四步配對流程；只有單月嫂無法完整覆蓋服務檔期時才顯示 2～4 段多人配對。測試環境暫時保留無寫入的多人介面預覽入口。
+- 案件人力配置以 1～4 段編輯完整正式 assignment 計畫，所有異動均先顯示調整前後、排班移除項目、時數差額與阻擋原因，再由管理員確認 Apply。
+
+### 排班、休假與薪資規則
+
+- 正式 ownership 統一使用 `case_staff_assignments` 與 assignment-owned `staff_schedule`；`orders.staff_id` 只可在首次正式配置時作 UI 建議值，不得作為正式排班或薪資歸屬。
+- 多日期休假、順延與代班採單次 Preview、單一 fingerprint 與 atomic Apply；任一日期驗證失敗即整批拒絕，不留下部分寫入。
+- Preview 與 Apply 都會重新讀取最新正式資料，重算跨案件占用、服務區段、後續順延、代班 lineage、付款／月結鎖定及排班衝突。
+- 所有未取消 assignment 的 `actual_hours` 總和必須精確等於訂單 `service_days × service_hours_per_day`；不相等時拒絕 Apply。成功寫入後薪資依最新正式排班自動計算，不另設人工薪資確認時間點。
+- 國定假日預設不產生雙倍薪；只有工會人員針對明確 assignment 排班日人工勾選並留下備註時，才計入雙倍薪。
+
+### 媒合、檔期鎖定與資料模型
+
+- 新增逐段檔期查詢、媒合方案與版本事件、逐位聯繫／意願、共用履歷，以及等待訂金檔期鎖的取得、釋放、取消與轉正式流程。
+- 新增休假／順延／代班 batch 與逐日 append-only 事件，保留原 assignment、代班月嫂、日期、操作者與批次冪等識別。
+- 新增原始服務區段欄位、同日多 assignment 相容規則、assignment schedule 唯一性與 live DB 完整性檢查／遷移工具。
+- 補上 legacy 單月嫂配對相容層；正式 assignment、排班與薪資不得由姓名、日期或舊訂單月嫂欄位推測。
+
+### API、文件與架構同步
+
+- 新增／調整月嫂逐段可用性、媒合方案、檔期鎖、休假 batch Preview／Apply、案件人力同步與 payroll reconciliation API／Service。
+- 修正空字串日期在案件人力 Preview 被解析為無效日期，以及首次正式配置零 assignment 的合法 bootstrap 情境。
+- 新增多月嫂 UX 討論紀錄、目標指南、驗收矩陣與 API／Server 共用整頓計畫；同步排班、行事曆、配對、假日雙倍薪與資料字典規格。
+- 同步 Master、API、Services、UI System Map 與 YAML IR，並記錄目前程式規格和後續待查核差異。
+
+### 驗證與測試清理
+
+- 清理後核心資料安全測試為 `618 passed, 1 warning`；完整 pytest 為 `1540 passed, 6 warnings`。
+- 與 GitHub workflow 相同的嚴格 flake8（`E9`、`F63`、`F7`、`F82`）結果為 `0`。
+- 移除依賴固定資料庫內容、外部服務、純 AST／原始碼文字、重複 schema／router 契約或一次性驗收狀態的測試，只保留可在隔離環境重跑且保護正式資料規則的 pytest。
+- 待補可重複測試：DB snapshot exporter／importer、固定案件日期 reconciliation，以及 match-record service／router 的 fake-backed 測試；缺口已記錄於 System Map TODO。
+
+### 部署與推送前提醒
+
+- 本節記錄待推送內容，不代表已部署；目前專案版本維持 `0.2.1`，若要建立正式 release，需另行決定下一版號並同步 `README.md`、`pyproject.toml` 與 `uv.lock`。
+- `online.bat` 不會自動更新既有資料庫。正式啟動新版前，必須先備份資料庫，在維護窗口套用新增 schema parts，並先以 `scripts/migrate_assignment_schedule_integrity.py` 的預設 check 模式檢查，再視結果使用 `--apply`。
+- 本批比較範圍為本機 `origin/main` 的 `36bedc5` 至本機 `main` 的 `1e86553`；推送前仍需 fetch 遠端並重新確認 ahead／behind、衝突與工作樹狀態。
+- 本次未包含 push 或正式部署。
+
+---
+
 ## 2026-07-22 待推送變更
 
 ### 已核准並部署

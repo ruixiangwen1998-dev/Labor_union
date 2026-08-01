@@ -40,7 +40,7 @@ def _cleanup(check_name: str, instance_id: str | None = None) -> None:
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM system_alerts WHERE fingerprint=%s", (f"line-monitor:{check_name}",))
+            cursor.execute("DELETE FROM service_monitor_alerts WHERE fingerprint=%s", (f"line-monitor:{check_name}",))
             cursor.execute("DELETE FROM system_health_status WHERE check_name=%s", (check_name,))
             if instance_id:
                 cursor.execute("DELETE FROM service_heartbeats WHERE instance_id=%s", (instance_id,))
@@ -104,7 +104,7 @@ def test_critical_check_is_debounced_and_recovery_resolves_alert():
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT status,severity FROM system_alerts WHERE fingerprint=%s",
+                    "SELECT status,severity FROM service_monitor_alerts WHERE fingerprint=%s",
                     (f"line-monitor:{check_name}",),
                 )
                 alert = cursor.fetchone()
@@ -128,7 +128,7 @@ def test_critical_check_is_debounced_and_recovery_resolves_alert():
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT status,resolved_by FROM system_alerts WHERE fingerprint=%s",
+                    "SELECT status,resolved_by FROM service_monitor_alerts WHERE fingerprint=%s",
                     (f"line-monitor:{check_name}",),
                 )
                 assert cursor.fetchone() == {"status": "resolved", "resolved_by": "monitor"}
@@ -222,7 +222,7 @@ def test_supervisor_event_is_resolved_after_service_recovers():
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT event_type,status,resolved_by FROM system_alerts WHERE fingerprint=%s",
+                    "SELECT event_type,status,resolved_by FROM service_monitor_alerts WHERE fingerprint=%s",
                     (fingerprint,),
                 )
                 assert cursor.fetchone() == {
@@ -236,7 +236,7 @@ def test_supervisor_event_is_resolved_after_service_recovers():
         conn = get_connection()
         try:
             with conn.cursor() as cursor:
-                cursor.execute("DELETE FROM system_alerts WHERE fingerprint=%s", (fingerprint,))
+                cursor.execute("DELETE FROM service_monitor_alerts WHERE fingerprint=%s", (fingerprint,))
             conn.commit()
         finally:
             conn.close()

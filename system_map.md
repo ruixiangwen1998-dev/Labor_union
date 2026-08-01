@@ -15,6 +15,37 @@
 
 ### 🏛️ 全局巨觀架構 (Master Hierarchy)
 
+##### Module: MultiCaregiverSchedulingUXProgramGoalGuide
+- Sub Map: root
+- Type: documentation
+- State: `planned`
+- Source: document/管理端UI/多月嫂排班UX目標指南.md
+- Dependencies: []
+- Description: 將《多月嫂排班 UX 改善討論紀錄》目前已確認的產品目標、人工核准的架構澄清、驗收條件與責任邊界整理為本計畫可版本化的目標指南；所有後續 Task 與 Reviewer finding 必須以穩定 goal／acceptance ID 追溯，不得把實作差距或逐輪修補轉化為未核准需求。
+- Input:
+  - source_decisions: document/管理端UI/多月嫂排班UX改善討論紀錄.md 中已確認的 UX 決議。
+  - approved_architecture_clarifications: 經人類 Checkpoint 核准且附來源的架構澄清。
+- Output:
+  - goal_catalog: 具有穩定 MCSUX-G-* ID、來源章節、核准狀態、架構 binding 與 excluded scope 的目標目錄。
+  - acceptance_catalog: 具有穩定 MCSUX-AC-* ID 且可由 Task verification 引用的驗收目錄。
+  - traceability_contract: Task 與 Reviewer finding 的必要 goal refs、change class、responsibility delta 與停止規則。
+- Invariants:
+  - system_map 仍是架構 SSOT；Goal Guide 是本多月嫂 UX 計畫的產品目標與驗收 SSOT；原討論紀錄只作決議來源證據。
+  - 目標指南不得宣稱尚未驗證的 DB、Service、API 或 UI 已完成。
+  - 每個本計畫 Task 必須引用至少一個有效 goal ID 與 acceptance ID；引用缺失或不存在時不得進入 Implementer。
+  - Reviewer finding 必須引用有效 goal ID，並包含 evidence、impact、reproduction、recommendation、severity 與穩定 fingerprint；缺項不得要求 Implementer 修正。
+  - change_class 僅允許 implements_existing_goal、preserves_existing_goal、deviation、new_requirement、responsibility_change。
+  - new_requirement 或 responsibility_change 必須停止 Task／Reviewer 修正循環，提出規格澄清或 Schema Update Request 並等待人工 Checkpoint。
+  - Goal Guide 與 Task、Reviewer finding 或既有架構契約衝突時必須 fail fast，不得由 Implementer 或 Reviewer 自行選邊。
+  - 相同 fingerprint 的 finding 必須更新原紀錄，不得建立重複問題擴張範圍。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-c", "from pathlib import Path; s=Path('document/管理端UI/多月嫂排班UX目標指南.md').read_text(encoding='utf-8'); required=('0.1.0-draft','MCSUX-G-001','MCSUX-G-009','MCSUX-AC-001','MultiCaregiverSchedulingUXProgramGoalGuide','多月嫂排班UX改善討論紀錄.md','new_requirement','responsibility_change'); assert all(x in s for x in required); print('MCSUX GOAL GUIDE TRACEABLE')"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "MCSUX GOAL GUIDE TRACEABLE"}
+- Non Goals:
+  - 不在本節點修改產品 Schema、DB、Service、API 或 UI。
+  - 不把全專案 ADAD 工具改造混入多月嫂產品施工。
+  - 不將 implementation backlog、gap audit 或 hardening finding 改寫為原始 UX 目標。
+- Observability: not_required
+
 ##### Module: Main
 - Sub Map: root
 - Source: main.py
@@ -78,7 +109,7 @@
 - State: `dirty`
 - Description: 已凍結的歷史假資料產生器，僅供人工閱讀既有資料結構與情境設計；不再是可執行工具、啟動流程或可被匯入的執行期模組。任何新增假資料條件必須建立獨立腳本、獨立測試與獨立 ADAD 節點／Task。
 - Dependencies: []
-- Complexity: low
+- Complexity: medium
 - Input:
   - source_reference: 人工唯讀檢視 scripts/generate_fake_data.py 內既有歷史邏輯；不構成 CLI、import 或函式呼叫介面。
   - attempted_invocation: 任何直接執行、import 或呼叫 main() 的嘗試都必須立即拒絕。
@@ -173,7 +204,7 @@
   - 驗證取消、交接、超收、雙薪與 finance staging 固定 facts，收集 table counts 與具體失敗原因。
   - 全部通過才回傳 canonical validation report；任一違規立即以可辨識錯誤 fail-closed。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_db_snapshot_fixture_v2_validator.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-db-snapshot-v2-validator"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_reset_fake_database.py::test_preview_validates_v3_without_reset", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-db-snapshot-v3-validator"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "scripts\\db_snapshot_fixture_v2_validator.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
 - Observability: not_required
 - Non Goals:
@@ -210,8 +241,9 @@
   - check 模式輸出 deterministic report 後 rollback；apply 模式以 before-value optimistic guard 只更新 mismatch rows。
   - apply 在 commit 前重查 50 案並逐案比對 expected dates；全部一致才 commit，否則 rollback 並回傳 conflict。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_reconcile_fixture_order_dates_v2.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-reconcile-fixture-order-dates-v2"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "scripts\\reconcile_fixture_order_dates_v2.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
+- Todo:
+  - 新增使用 fake connection 的可重複 reconciliation pytest；已移除依賴目前固定 50 案資料庫狀態的一次性驗收。
 - Observability: not_required
 - Non Goals:
   - 不修正 actual dates、assignments、schedule、付款、帳務或生命週期狀態。
@@ -240,7 +272,7 @@
   - 必須明確排除 finance_alerts、finance_alert_events、LINE、crawler、system alerts、FAQ、legacy payments、migration review、人工稽核與其他非 allowlist tables；不得以 SHOW TABLES 後全庫傾倒。
   - 必須在單一 repeatable-read consistent snapshot 中讀取所有 allowlist tables，完成後 rollback 唯讀 transaction 並關閉連線。
   - 必須將完整 tables 交由 DatabaseSnapshotFixtureV2Validator 驗證；不得在 exporter 中略過、放寬或自行修正失敗資料。
-  - v3 必須包含固定 15 筆 2026 國定假日，日期、名稱與 is_double_pay_default 必須符合正式模板。
+  - v3 必須包含固定 15 筆 2026 國定假日。fixture 中既有 is_double_pay_default 僅為歷史相容資料；正式排班流程不得讀取它自動啟用雙倍薪，新建假日與新排班預設均為 false。
   - 必須將已驗證 rows 交由 DatabaseSnapshotFixtureV2Serializer 產生 JSONL、manifest 與 checksum；不得在 exporter 複製另一套 canonicalization。
   - manifest 與正式 table files 不得包含 exported_at=now、來源 DB 名稱、DB 帳密、.env 值、連線資訊或其他每次執行會漂移的 metadata。
   - exporter 不得 import、呼叫、解除或繞過 frozen GenerateFakeData；其歷史原始碼僅作人工規格參考。
@@ -254,8 +286,9 @@
   - 若同版本正式 bundle 不存在，以原子 rename 發布；若存在則比對 checksum，相同只回報 identical，不同 fail-closed。
   - 無論成功或失敗都 rollback 唯讀 transaction、關閉 DB connection 並清除未發布暫存目錄。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_db_snapshot_fixture_v2_exporter.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-db-snapshot-v2-exporter"], "cwd": "project", "timeout": 120, "expect_exit": 0, "expect_stdout_contains": "passed"}
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "scripts\\export_db_snapshot_fixture_v2.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
+- Todo:
+  - 新增注入 fake snapshot reader 的可重複 exporter pytest；已移除直接讀取 configured DB 的測試。
 - Observability: not_required
 - Non Goals:
   - 不匯入資料、不建立或修改 schema、不刪除或清空 DB。
@@ -294,8 +327,9 @@
   - 每列先以 business key 查詢；不存在時檢查 source id collision 後參數化 INSERT，存在時以 serializer 相同 canonical hash 比較是否 identical。
   - dry-run 記錄 would_insert／skipped_identical 後 rollback；apply 寫入後重讀完整 allowlist 並執行 validator，成功才 commit。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_db_snapshot_fixture_v2_importer.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-db-snapshot-v3-importer"], "cwd": "project", "timeout": 120, "expect_exit": 0, "expect_stdout_contains": "passed"}
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "scripts\\import_db_snapshot_fixture_v2.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
+- Todo:
+  - 新增注入 fake target DB 的可重複 importer pytest；已移除只在 configured DB 等同 v3 fixture 時成立的測試。
 - Observability: not_required
 - Non Goals:
   - 不支援 production merge、upsert、歷史資料覆寫、任意 fixture 版本或任意 table。
@@ -436,6 +470,371 @@
   - command: {"argv": [".venv\\Scripts\\python.exe", "-c", "from pathlib import Path; s=Path('db/schema.sql').read_text(encoding='utf-8'); assert 'CREATE TABLE IF NOT EXISTS payments (' not in s; print('LEGACY PAYMENTS SCHEMA RETIRED')"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "LEGACY PAYMENTS SCHEMA RETIRED"}
 - Observability: not_required
 
+##### Module: CaregiverMatchingPlanSchema
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/98_caregiver_matching_plans.sql
+- Dependencies: [PaymentSchema, DatabaseSchemaLoader]
+- Description: 建立洽談中訂單的單一或多月嫂配對方案 header 與一至四個連續服務區段；此節點只保存版本化配對結構，不保存聯繫／意願／履歷事件，也不建立等待訂金日期鎖定、正式 assignment、正式排班或薪資資料。
+- Complexity: medium
+- Input:
+  - case_no: 狀態為洽談中的正式訂單案件編號
+  - plan_segments: 一至四個依日期排序的月嫂連續服務區段，每段包含明確 staff_id、服務起日與服務迄日
+  - created_by: 建立方案版本的非空管理員識別
+- Output:
+  - caregiver_matching_plans: 案件配對方案 header、版本、狀態與目前有效版本
+  - caregiver_matching_plan_segments: 方案版本內逐段保存的月嫂與連續服務日期
+- Algorithm:
+  - 以 additive、可重跑的 migration 建立配對方案 header；每次正式調整建立新版本，舊版本的 case_no、version、created_by 與區段內容保留且不得覆寫或刪除，僅允許 status／is_active 生命週期轉換。
+  - 以 segment_order 保存一至四個服務區段；每段只保存明確 staff_id 與含端點的連續起訖日期，不由姓名、orders.staff_id 或 matching_records 推測月嫂。
+  - 建立與 DatabaseSchemaLoader 相容的單一 statement 不可變性 triggers：方案 header 的 BEFORE UPDATE 以 `SET NEW...` guard 讓任何結構欄位變動觸發既有 NOT NULL／CHECK 約束失敗，但允許 status、is_active 與 updated_at 改變；header BEFORE DELETE、segment BEFORE UPDATE 與 segment BEFORE DELETE 以單一 SIGNAL 拒絕。
+  - `matching_records` 保留為 legacy 媒合紀錄；migration 不搬移、不覆寫、不刪除既有資料，也不將其自動轉成新方案。
+  - 本節點不保存配對事件或建立 staff-date lock；聯繫／意願／履歷事件及客戶確認後的原子日期鎖定由後續獨立節點承接。
+- Invariants:
+  - 每個方案版本必須屬於一個存在的 orders.case_no；同一案件同一時間至多一個目前有效方案版本。
+  - segment_order 必須介於 1 至 4 且在同一方案版本內唯一；同一 staff_id 在同一方案版本內最多出現一次。
+  - 每段 assigned_start_date 與 assigned_end_date 必填且起日不得晚於迄日；DB 只保護單段資料完整性，完整覆蓋、空缺、重疊、檔期與最多四段業務驗證仍由正式配對驗證服務執行。
+  - 配對方案不是正式服務指派；不得寫入 case_staff_assignments、staff_schedule、staff_payments、actual_hours 或 orders.staff_id。
+  - 配對方案不占用正式檔期；不得在本 schema 建立或偽造等待訂金日期鎖定。
+  - 已建立方案的 case_no、version、created_by 及所有區段欄位不得 UPDATE 或 DELETE；只有 header.status、header.is_active 與對應生命週期時間允許受控更新，調整配置必須建立新版本。
+  - header 與 segments 的外鍵刪除策略必須為 RESTRICT／NO ACTION，不得使用 ON DELETE CASCADE；不得因刪除訂單、月嫂或方案 header 連帶移除配對歷史。
+  - DB 必須以可重跑建立的 BEFORE UPDATE／DELETE triggers 機械阻止 header 結構欄位改寫、header 刪除、segment 改寫及 segment 刪除；不得只依賴服務層自律、註解或測試字串。
+  - 每個 CREATE TRIGGER 必須能由現有 DatabaseSchemaLoader 當成單一完整 statement 交給 MySQL：不得需要 DELIMITER、BEGIN／END、IF／END IF 或 trigger body 內部分號；測試必須檢查 loader 擷取出的四個 CREATE TRIGGER statement 完整且不含被切斷的片段。
+  - migration 必須可重跑且只能新增本節點擁有的表、索引、外鍵與約束；不得修改、回填或刪除 matching_records、orders、case_staff_assignments 或 staff_schedule 的既有資料。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_caregiver_matching_plan_schema.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-caregiver-matching-plan-schema"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不搜尋候選月嫂、不驗證完整配對覆蓋、不傳送訊息或履歷。
+  - 不保存聯繫、意願、履歷發送、客戶確認或方案取消事件。
+  - 不建立、解除或轉換等待訂金日期鎖定。
+  - 不建立正式 assignment、正式日排班、actual_hours、應付款或月結。
+- Observability: not_required
+
+##### Module: CaregiverMatchingPlanEventSchema
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/99_caregiver_matching_plan_events.sql
+- Dependencies: [CaregiverMatchingPlanSchema, DatabaseSchemaLoader]
+- Description: 以 append-only 事件保存配對方案與個別區段的聯繫資訊發送、月嫂意願變更、履歷與備註發送及方案取消歷史；此節點只保存已發生事件，不執行傳送、不記錄客戶確認鎖定，也不建立正式 assignment。
+- Complexity: medium
+- Input:
+  - plan_id: 已存在且不可變的配對方案版本
+  - segment_id: 區段事件所屬的明確方案區段；方案層事件可為 null
+  - event_type: info_1_sent、info_2_sent、willingness_changed、resume_sent 或 plan_cancelled
+  - event_key: 呼叫端提供的非空冪等鍵
+  - actor: 記錄事件的非空管理員識別
+  - payload: 事件型別限定的不可變 JSON 內容，履歷事件包含實際發送備註
+- Output:
+  - caregiver_matching_plan_events: append-only 配對操作與發送事實
+- Algorithm:
+  - 以 additive、可重跑的 migration 建立事件表；每筆事件以明確 plan_id 關聯既有方案，區段事件另存 segment_id。
+  - 以 event_type enum 區分兩次訂單資訊發送、意願變更、個別履歷與備註發送及方案取消；payload 保存當次不可變事件內容，不把目前狀態覆寫回方案或 legacy matching_records。
+  - 以全域唯一 event_key 防止同一外部動作重播成兩筆事件；重複 event_key 由 DB 唯一約束拒絕，不更新既有事件。
+  - 建立與 DatabaseSchemaLoader 相容的單一 statement BEFORE UPDATE 與 BEFORE DELETE triggers，兩者均以 SIGNAL 阻止事件被改寫或刪除。
+  - 本節點不保存 customer_confirmed／lock_acquired／lock_released；客戶確認、日期鎖定及解除必須由後續鎖定交易節點在單一 transaction 保存。
+- Invariants:
+  - 每筆事件必須關聯存在的 caregiver_matching_plans.id；segment_id 非 null 時必須存在於 caregiver_matching_plan_segments，且服務層必須驗證該 segment 屬於同一 plan_id，不得以 staff_id、姓名或日期推測。
+  - event_type 只允許 info_1_sent、info_2_sent、willingness_changed、resume_sent、plan_cancelled；不得以自由文字建立未知業務事件。
+  - info_1_sent、info_2_sent、willingness_changed 與 resume_sent 必須具有 segment_id；plan_cancelled 必須為方案層事件且 segment_id 為 null。此型別／target 契約須以 DB CHECK 約束。
+  - event_key、actor 必須 trim 後非空且 event_key 全表唯一；occurred_at 由 DB 建立後不可改寫。
+  - payload 必須是有效 JSON object，DB 必須以 `CHECK (JSON_TYPE(payload) = 'OBJECT')` 拒絕 array、scalar 與 null；resume_sent 的 payload 由後續服務保證保存實際履歷備註，多月嫂說明不得只存在 UI 暫存。
+  - occurred_at 必須明確宣告 NOT NULL 並由 DB CURRENT_TIMESTAMP 建立；所有事件只能 INSERT，不得 UPDATE 或 DELETE，DB 必須以可重跑 triggers 機械阻止。
+  - plan_id 與 segment_id 外鍵刪除策略必須為 RESTRICT／NO ACTION，不得因刪除方案或區段連帶移除事件。
+  - 每個 CREATE TRIGGER 必須由 DatabaseSchemaLoader 擷取為單一完整 statement；不得需要 DELIMITER、BEGIN／END 或 body 內部分號。
+  - 驗收測試必須精確比對 event_type／segment_id target CHECK 與 JSON_TYPE object CHECK；不得使用 `or "CHECK" in sql`、只搜尋任意 CHECK 或其他可被無關約束滿足的寬鬆斷言。
+  - migration 不得修改、回填或刪除 caregiver_matching_plans、caregiver_matching_plan_segments、matching_records、orders、case_staff_assignments 或 staff_schedule 的既有資料。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_caregiver_matching_plan_event_schema.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-caregiver-matching-plan-event-schema"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不傳送訂單資訊或履歷，不查詢或更新月嫂意願的目前投影。
+  - 不保存客戶確認、日期鎖定、解除鎖定或訂金轉正式 assignment 事件。
+  - 不建立或修改正式 assignment、日排班、actual_hours、薪資或月結。
+- Observability: not_required
+
+##### Module: CaregiverAvailabilityLockSchema
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/99a_caregiver_availability_locks.sql
+- Dependencies: [CaregiverMatchingPlanSchema, DatabaseSchemaLoader]
+- Description: 建立客戶確認、等待訂金階段的配對方案鎖定批次與逐月嫂逐日占用；以 DB 唯一鍵防止同一月嫂同日存在兩筆有效等待訂金鎖，但不執行鎖定／解除交易、不檢查正式排班，也不建立正式 assignment。
+- Complexity: medium
+- Input:
+  - plan_id: 客戶已確認且仍屬洽談中訂單的配對方案版本
+  - locked_segments: 方案各區段的明確 segment_id、staff_id 與逐日 lock_date
+  - created_by: 建立鎖定批次的非空管理員識別
+- Output:
+  - caregiver_availability_locks: 每個方案版本的鎖定批次與 active／released／converted／cancelled 生命週期
+  - caregiver_availability_lock_days: 逐月嫂逐日有效或已解除的等待訂金占用列
+- Algorithm:
+  - 以 additive、可重跑的 migration 建立 lock header 與 lock days；header 以 plan_id 關聯不可變配對方案版本，day 以明確 segment_id、staff_id 與 lock_date 保存每日占用。
+  - header 使用可空 is_active marker 與 `UNIQUE(plan_id, is_active)` 保證同一方案至多一筆有效鎖定；day 使用可空 active_marker 與 `UNIQUE(staff_id, lock_date, active_marker)` 保證同一月嫂同日至多一筆有效等待訂金鎖。
+  - active 時 marker 固定為 1 且 release 欄位為 null；released／converted／cancelled 時 marker 改為 null並保存 released_by、released_at，歷史列保留。
+  - 建立與 DatabaseSchemaLoader 相容的單一 statement update guards：header 只允許 status、is_active、released_by、released_at 與 updated_at 生命週期欄位改變；day 只允許 active_marker、released_by、released_at 改變。兩張表的 BEFORE DELETE trigger 均以單一 SIGNAL 拒絕。
+  - 本節點只提供資料結構；鎖定服務仍須在單一 transaction 鎖定方案、檢查所有正式排班與其他有效 locks，再一次寫入完整批次，任何衝突不得留下部分日列。
+- Invariants:
+  - 每個 lock header 必須關聯存在的 caregiver_matching_plans.id；同一 plan_id 同時至多一筆 is_active=1 的鎖定批次。
+  - 每個 lock day 必須關聯同一批次的明確 plan segment 與 staff；服務層必須驗證 segment 屬於 header.plan_id 且 staff_id 等於該 segment.staff_id，不得依姓名、orders.staff_id 或日期推測。
+  - active header 必須同時為 status=active、is_active=1、released_by／released_at 為 null；released、converted、cancelled 必須 is_active=null 且具有 trim 後非空的 released_by 與非 null released_at。此狀態組合須由 DB CHECK 約束。
+  - active day 必須 active_marker=1 且 released_by／released_at 為 null；解除後 active_marker=null、released_by trim 後非空且 released_at 非 null。此狀態組合須由 DB CHECK 約束。
+  - `(staff_id, lock_date, active_marker)` 必須唯一；相同月嫂同日不得存在兩筆 active_marker=1，但解除後歷史列必須可共存且不得覆寫。
+  - `(lock_id, segment_id, lock_date)` 必須唯一；同一鎖定批次不得重複寫入同一區段同一天。
+  - header 的 plan_id、created_by、created_at 與 day 的 lock_id、segment_id、staff_id、lock_date、created_at 不得改寫；只有明列生命週期欄位可受控更新。
+  - header.created_at、header.updated_at 與 day.created_at 必須顯式宣告 NOT NULL 並由 DB CURRENT_TIMESTAMP 建立；不得依賴 TIMESTAMP 的版本／SQL mode 隱含 nullability。
+  - 兩張表均不得 DELETE，所有外鍵刪除策略必須為 RESTRICT／NO ACTION；DB 必須以 loader-compatible 單一 statement triggers 機械保護，不得只依賴服務層自律。
+  - migration 檔名必須在 lexical schema-parts 載入順序中晚於 98_caregiver_matching_plans.sql 與 99_caregiver_matching_plan_events.sql；測試必須以 DatabaseSchemaLoader 實際 loaded_parts 驗證順序。
+  - 驗收測試必須精確斷言 release-state CHECK 包含 `CHAR_LENGTH(TRIM(released_by)) > 0`，並精確檢查三個建立／更新時間欄位的 NOT NULL；不得以只搜尋 released_by IS NOT NULL 或任意 TIMESTAMP 字串替代。
+  - 本 schema 的唯一鍵只防止等待訂金 locks 彼此重疊；不得宣稱已跨表防止 staff_schedule 正式排班衝突，正式排班與 locks 的一致性必須由後續 transaction service 鎖列後檢查。
+  - migration 不得修改、回填或刪除配對方案、配對事件、matching_records、orders、case_staff_assignments 或 staff_schedule 的既有資料。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_caregiver_availability_lock_schema.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-caregiver-availability-lock-schema"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不搜尋候選、不執行客戶確認、鎖定、解除、取消或訂金轉正式 assignment 的 transaction。
+  - 不保存 append-only 鎖定稽核事件；該事件由後續獨立 Schema 節點承接。
+  - 不建立或修改正式 assignment、staff_schedule、actual_hours、薪資或月結。
+- Observability: not_required
+
+##### Module: CaregiverAvailabilityLockEventSchema
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/99b_caregiver_availability_lock_events.sql
+- Dependencies: [CaregiverAvailabilityLockSchema, DatabaseSchemaLoader]
+- Description: 以 append-only 事件保存等待訂金日期鎖定批次成功 acquired、released、converted、cancelled 的操作者、原因、冪等鍵與不可變 payload；此節點只記錄成功事實，不執行鎖定交易或建立正式 assignment。
+- Complexity: medium
+- Input:
+  - lock_id: 已存在的 caregiver availability lock batch
+  - event_type: lock_acquired、lock_released、lock_converted 或 lock_cancelled
+  - event_key: 呼叫端提供的全域唯一冪等鍵
+  - actor: 記錄事件的非空管理員識別
+  - reason: release／convert／cancel 的非空原因；acquired 為 null
+  - payload: 當次不可變 JSON object 事件內容
+- Output:
+  - caregiver_availability_lock_events: append-only 鎖定生命週期稽核事件
+- Algorithm:
+  - 以 additive、可重跑的 migration 建立 lock event table；每筆事件只以明確 lock_id 關聯鎖定批次，plan 與 segments 由 lock 關係取得，不複製或推測 ownership。
+  - 以 event_type enum 區分成功建立、解除、訂金轉正式服務及取消釋放；reason 與 payload 保存當次不可變操作事實。
+  - 以全域唯一 event_key 防止同一交易重播成兩筆事件；重複 event_key 由 DB 唯一約束拒絕，不更新既有事件。
+  - 建立與 DatabaseSchemaLoader 相容的單一 statement BEFORE UPDATE 與 BEFORE DELETE triggers，兩者均以 SIGNAL 阻止事件被改寫或刪除。
+  - 本節點不記錄失敗嘗試且不單獨 commit；後續 transaction service 必須與 lock header／days 的狀態變更在同一 connection、同一 transaction 寫入對應事件。
+- Invariants:
+  - 每筆事件必須關聯存在的 caregiver_availability_locks.id；外鍵刪除策略必須為 RESTRICT／NO ACTION。
+  - event_type 只允許 lock_acquired、lock_released、lock_converted、lock_cancelled；不得以自由文字建立未知事件。
+  - lock_acquired 必須 reason=null；lock_released、lock_converted、lock_cancelled 必須 reason trim 後非空。此型別／reason 契約須由 DB CHECK 精確約束。
+  - event_key、actor 必須 trim 後非空且 event_key 全表唯一。
+  - payload 必須以 `CHECK (JSON_TYPE(payload) = 'OBJECT')` 保證為 JSON object；不得接受 array、scalar 或 null。
+  - occurred_at 必須明確宣告 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP，建立後不可改寫。
+  - 所有事件只能 INSERT，不得 UPDATE 或 DELETE；DB 必須以可重跑、loader-compatible 單一 statement triggers 機械阻止。
+  - migration 檔名必須在 lexical schema-parts 載入順序中晚於 99a_caregiver_availability_locks.sql；測試必須以 DatabaseSchemaLoader 實際 loaded_parts 驗證順序。
+  - 驗收測試必須精確比對 event_type／reason CHECK、JSON_TYPE object CHECK、非空 actor／event_key、RESTRICT FK 及完整 trigger statements；不得使用可被任意 CHECK／TRIGGER 字串滿足的寬鬆斷言。
+  - migration 不得修改、回填或刪除 lock header／days、配對方案／事件、matching_records、orders、case_staff_assignments 或 staff_schedule 的既有資料。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_caregiver_availability_lock_event_schema.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-caregiver-availability-lock-event-schema"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不執行 customer confirmation、lock acquisition、release、cancel 或 deposit conversion transaction。
+  - 不保存失敗嘗試、候選搜尋結果或目前狀態投影。
+  - 不建立或修改正式 assignment、staff_schedule、actual_hours、薪資或月結。
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionEventSchema
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/101_assignment_schedule_leave_substitution_events.sql
+- Dependencies: [PaymentSchema, MultiCaregiverScheduleSchema, DatabaseSchemaLoader]
+- Description: 以 append-only 事件保存正式 assignment 的單日休假處置、後續區段順延或獨立代班 assignment 成功套用事實，以及原 assignment 與代班 assignment 各自的薪資核對快照；此節點只保存不可變事件，不執行排班調整或薪資計算。
+- Complexity: medium
+- Input:
+  - case_no: 事件所屬的明確案件編號
+  - original_assignment_id: 請假日原正式服務指派
+  - original_schedule_id: 被處置之單日排班列
+  - work_date: 單日休假日期
+  - resolution_type: leave_only、defer_following_assignments 或 substitute
+  - substitute_assignment_id: resolution_type=substitute 時已建立的獨立正式代班 assignment；其他處置為 null
+  - event_key: 呼叫端提供的全域唯一冪等鍵
+  - actor: 執行處置的非空管理員識別
+  - reason: 非空休假／代班原因
+  - schedule_snapshot: 原排班、順延區段及代班日套用前後的不可變 JSON object
+  - payroll_snapshot: original_assignment_id 與 substitute_assignment_id 各自的工時、薪資歸屬及核對結果 JSON object
+- Output:
+  - assignment_schedule_leave_substitution_events: append-only 單日休假、順延與代班成功事實
+- Algorithm:
+  - 以 additive、可重跑的 migration 建立事件表；每列以明確 case_no、original_assignment_id、original_schedule_id 與 work_date 錨定被處置的原 assignment-owned 日排班。
+  - 以 resolution_type 區分只記休假、順延後續正式 assignment 區段及建立獨立代班 assignment；substitute 事件另存不可為原 assignment 的 substitute_assignment_id。
+  - schedule_snapshot 保存同一交易實際套用的原日排班、受順延 assignment 區段與代班日 before／after；payroll_snapshot 分開保存原 assignment 與代班 assignment 的 assignment 級工時、薪資歸屬及核對結果，不得只寫入 notes 或依 staff_id／姓名合併。
+  - 以全域唯一 event_key 防止同一管理命令重播成兩筆事件；重複 event_key 由 DB 唯一約束拒絕，不更新既有事件。
+  - 建立與 DatabaseSchemaLoader 相容的單一 statement BEFORE UPDATE 與 BEFORE DELETE triggers，兩者均以 SIGNAL 阻止事件改寫或刪除。
+  - 本節點不記錄失敗、preview 或尚未套用的提案且不單獨 commit；後續 transaction service 必須在日期鎖、歷史保護、付款／月結與 assignment 級薪資核對全部通過後，與排班及 assignment 變更使用同一 connection、同一 transaction 寫入事件。
+- Invariants:
+  - case_no、original_assignment_id、original_schedule_id、work_date 必須明確提供；不得由 orders.staff_id、月嫂姓名、相似日期或相鄰區段推測 ownership。
+  - original_assignment_id 與 substitute_assignment_id 必須以 RESTRICT／NO ACTION 外鍵關聯 case_staff_assignments.id；original_schedule_id 必須以 RESTRICT／NO ACTION 外鍵關聯 staff_schedule.id；case_no 必須關聯 orders.case_no。
+  - resolution_type 只允許 leave_only、defer_following_assignments、substitute；substitute 必須具有非 null 且不等於 original_assignment_id 的 substitute_assignment_id，其他兩型必須 substitute_assignment_id=null。此型別／target 契約須由 DB CHECK 精確約束。
+  - DB 外鍵只能證明列存在；後續 transaction service 仍必須在鎖定後驗證 original schedule 屬於 original_assignment_id、兩個 assignment 均屬 case_no、work_date 等於原 schedule 日期，且 substitute assignment 是本次代班專用的獨立區段，不得重用或改寫原 assignment。
+  - event_key、actor、reason 必須 trim 後非空，event_key 全表唯一；occurred_at 必須為 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP。
+  - schedule_snapshot 與 payroll_snapshot 必須各以 `CHECK (JSON_TYPE(...) = 'OBJECT')` 保證為 JSON object，不得接受 array、scalar 或 null。
+  - payroll_snapshot 必須由後續 transaction service 明確保存 original_assignment_id 與 substitute_assignment_id 各自的 actual hours、payable ownership、雙倍薪與樓層費核對結果；leave_only／defer 類型亦須明確保存 substitute_assignment_id=null，不得依月嫂姓名或 staff_id 合併薪資。
+  - 所有事件只能 INSERT，不得 UPDATE 或 DELETE；DB 必須以可重跑、loader-compatible 的單一 statement triggers 機械阻止改寫與刪除。
+  - migration 檔名必須在 lexical schema-parts 載入順序中晚於 100_staff_schedule_allow_same_day_multiple_assignments.sql；測試必須以 DatabaseSchemaLoader 實際 loaded_parts 驗證順序。
+  - 驗收測試必須精確比對 resolution_type／substitute target CHECK、兩個 JSON_TYPE object CHECK、非空 actor／reason／event_key、唯一 event_key、全部 RESTRICT FK 及完整 trigger statements；每個 named constraint 的斷言都必須實際使用 `in compact_sql` 或等價結構比對，不得寫成永遠為真的 `assert "固定字串"`，亦不得使用可被任意 CHECK／TRIGGER 字串滿足的寬鬆斷言。
+  - migration 不得新增、修改、回填或刪除 orders、case_staff_assignments、staff_schedule、actual_hours_adjustments、staff_payments、月結、既有鎖定或配對資料；不得以 migration 修復歷史排班。測試必須先正確去除整行／inline `--` 與 `/* ... */` 註解，再以完整 statement shape allowlist 或等價精確方法（不得只用可接受任意尾端內容的 startswith）證明除建立本事件表、重建本表自有 triggers 外，不含針對受保護既有表的 ALTER、INSERT、UPDATE、DELETE、REPLACE、TRUNCATE、DROP 或 RENAME；只排除 DROP TABLE／TRUNCATE TABLE 不足以驗收。若使用 regex，word boundary 必須真正使用 `\b` 而非在 raw string 中誤寫成匹配字面反斜線的 `\\b`。
+  - 測試必須將 statement allowlist／protected-table mutation 判定抽成可直接接受任意 SQL statement 並回傳或拋出明確結果的 validator helper，不得只把判斷內嵌在讀取正式 migration 的單一正向測試中。
+  - adversarial／mutation cases 必須參數化覆蓋八種禁止操作 × orders、case_staff_assignments、staff_schedule 三個受保護表的完整 24 組交叉組合，逐案證明 validator 拒絕；不得只讓每種 operation 各挑一個表形成 8 筆分散案例。
+  - 測試另須直接把五種合法 statement shape 各自送入 validator 證明通過，並逐案將額外 SQL、非 SIGNAL trigger body、inline `--` comment、`#` comment 或 `/* ... */` block comment 插入合法前綴／token 邊界後證明無法繞過或造成假通過；僅因 allowlist regex 具有 `^...$` 而未執行負向 mutation case，不算驗收證據。
+  - 去除任何註解時必須以至少一個空白替代而非空字串，保留原本由註解分隔的 SQL token 邊界；mutation cases 必須直接覆蓋 `ALTER/**/TABLE`、`ALTER--comment` 換行接 `TABLE`、`UPDATE/**/table`、`DELETE/**/FROM` 等註解兩側沒有既有空白的合法 SQL，並證明仍能偵測。
+  - RENAME 防線必須同時檢查來源與 `TO` 目標；`RENAME TABLE orders TO archive` 與 `RENAME TABLE harmless TO orders` 只要任一側是受保護表都必須拒絕，並具有直接 mutation case。
+  - 本輪驗收不得只新增 `_contains_forbidden_mutation` 後仍將 allowlist 判斷留在 `test_sql_statements_are_whitelisted_by_exact_shape` 內；必須存在單一 `_validate_statement(statement)`（或明確等價 helper），同時執行完整 shape allowlist 與全部 protected-table 檢查，正式 migration、五種合法 shape 與所有 mutation cases 都必須呼叫同一 helper。
+  - 直接負向案例至少必須明確包含：合法 CREATE TABLE shape 後附加額外 SQL、兩種 CREATE TRIGGER 合法前綴改成 UPDATE／DELETE 受保護表的非 SIGNAL body、inline `--`、`#`、block comment token-separator，以及 RENAME protected source 與 protected target；每筆須斷言 `_validate_statement` 拒絕。另須對五種合法 shape 各自斷言接受，不能只在迴圈讀正式 migration 時間接通過。
+  - 上述直接案例必須以測試內明確建構的 statement literal／fixture 呼叫 `_validate_statement`：五種合法 shape 各呼叫一次且不拋錯；24 組交叉操作、RENAME 雙向與每個 comment／tail／非 SIGNAL body case 都必須使用 `with pytest.raises(...): _validate_statement(case)` 或等價最終拒絕斷言。只呼叫 `_contains_forbidden_mutation`、只測底層 token 或再次迴圈讀正式 migration，都不能取代此最終 validator 證據。
+  - 負向 fixtures 必須分別包含 CREATE TABLE 合法完整 shape 後附加額外 SQL、UPDATE trigger 合法 header 配 `UPDATE orders ...` body、DELETE trigger 合法 header 配 `DELETE FROM staff_schedule ...` body，以及 `ALTER--comment` 換行 `TABLE orders`、`ALTER#comment` 換行 `TABLE orders`、`ALTER/**/TABLE orders`；不得以單一 SET body 或單一 block-comment case概括。
+  - 最終收斂驗收：`test_validate_statement_rejects_comment_spliced_sql` 或等價直接測試的 case list 必須實際含有三個獨立字串 `ALTER--comment\nTABLE orders`、`ALTER#comment\nTABLE orders`、`ALTER/**/TABLE orders`，且逐筆以 `pytest.raises` 呼叫 `_validate_statement`；只列 `/**/` 的 ALTER／UPDATE／DELETE 三案不符合。
+  - 最終收斂驗收：RENAME source/target 測試迴圈必須對每個受保護表分別以 `pytest.raises` 呼叫 `_validate_statement("RENAME TABLE <protected> TO harmless")` 與 `_validate_statement("RENAME TABLE harmless TO <protected>")`；只對 `_contains_forbidden_mutation` 做 bool assert 不符合。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_schedule_leave_substitution_event_schema.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-schedule-leave-substitution-event-schema"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不執行單日休假 preview／apply、後續區段順延、代班候選搜尋、建立代班 assignment 或日期鎖定。
+  - 不允許改寫歷史排班；歷史日期與日期鎖定判定由後續 transaction service 在任何寫入前 fail-closed。
+  - 不計算或修改 actual_hours、staff_payments、雙倍薪、樓層費或月結；本表只保存同一成功交易產生的 assignment 級核對快照。
+  - 不取代 caregiver availability lock events、actual_hours_adjustments 或 order assignment change audits。
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchSchema
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/102_assignment_schedule_leave_substitution_batches.sql
+- Dependencies: [AssignmentScheduleLeaveSubstitutionEventSchema, DatabaseSchemaLoader]
+- Description: 為同一案件的一次多日期休假／順延／代班 Apply 建立 append-only batch 聚合根，保存全域冪等鍵、單一 Preview fingerprint、canonical request snapshot 與逐日 event ordinal 關聯；不建立第二套休假事件表，也不執行排班或薪資異動。
+- Complexity: medium
+- Input:
+  - batch_key: Server 接受並驗證的全域唯一整批冪等識別
+  - case_no: 同一批次唯一案件
+  - preview_fingerprint: 完整 canonical batch Preview 的 lowercase SHA-256
+  - item_count: canonical items 數量，至少一筆
+  - actor: 整批共用的非空管理員識別
+  - reason: 整批共用的非空原因
+  - request_snapshot: canonical 排序後完整 request 的 JSON object
+- Output:
+  - assignment_schedule_leave_substitution_batches: append-only batch header
+  - assignment_schedule_leave_substitution_event_batch_linkage: 既有逐日事件的 nullable batch_key 與 batch_item_index 關聯
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Algorithm:
+  - 建立 batch header，使用 batch_key primary key、case_no RESTRICT foreign key、精確 fingerprint／item_count／actor／reason／JSON checks、case-time index，以及阻止 UPDATE／DELETE 的單一 statement triggers。
+  - 以 metadata-guarded、可重跑且 fail-closed 的 ALTER，為既有 assignment_schedule_leave_substitution_events 增加 nullable batch_key 與 batch_item_index、batch RESTRICT foreign key、唯一 ordinal 與 batch-date index。
+  - legacy event 的兩個 linkage 欄位維持全為 NULL，不回填、不更新；新 atomic batch 的每日事件由後續 Apply transaction 一律寫入非 NULL linkage。
+  - 相同 batch_key 只在 case、fingerprint、canonical request、actor、reason、item_count 與全部逐日事件完全一致時視為 exact replay；本 Schema 只提供機械 identity，重播比較由後續 transaction service 執行。
+- Invariants:
+  - Traceability change_class=implements_existing_goal；responsibility_delta 僅為人類已核准的 AC-clar-008 atomic batch identity 與既有逐日 event linkage，不得擴張其他休假／代班責任。
+  - batch_key、case_no、actor、reason trim 後不得為空；preview_fingerprint 必須是 64 字元 lowercase hexadecimal；item_count 必須大於等於 1；request_snapshot 必須是 JSON object。
+  - batch header 只能 INSERT，不得 UPDATE 或 DELETE；DB 必須以 loader-compatible 的 BEFORE UPDATE／DELETE triggers SIGNAL 阻止改寫。
+  - batch_key 為全域 primary key；case_no 必須以 ON UPDATE RESTRICT／ON DELETE RESTRICT 關聯 orders.case_no；必須具有 `(case_no, occurred_at)` index。
+  - 既有逐日 event 的 batch_key 與 batch_item_index 必須同為 NULL 或同為非 NULL；非 NULL ordinal 從 0 起，且 `(batch_key, batch_item_index)` 必須唯一。
+  - event batch_key 必須以 ON UPDATE RESTRICT／ON DELETE RESTRICT 關聯 batch header；必須具有 `(batch_key, work_date)` index。
+  - event_key 仍為逐日事件的全域唯一識別，不得移除或放寬；後續 Server 依 batch_key 與 batch_item_index 確定性產生，不接受 client 逐日事實鍵。
+  - migration 必須晚於 101_assignment_schedule_leave_substitution_events.sql，且可由 DatabaseSchemaLoader 連續執行兩次；同名錯誤欄位、索引、外鍵、CHECK 或 trigger 必須 deterministic fail-closed，不得靜默修補或重建。
+  - migration 不得回填或更新 legacy event，不得停用既有 append-only triggers，也不得新增、修改或刪除 orders、case_staff_assignments、staff_schedule、付款、月結、工時、配對或鎖定資料。
+  - 不得新增第二張 leave／substitution event 表、失敗嘗試表、current-state projection 或 per-date transaction table。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_schedule_leave_substitution_batch_schema.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-schedule-leave-substitution-batch-schema"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不計算多日期 Preview、fingerprint、順延／代班結果、檔期衝突、工時、薪資或樓層費。
+  - 不允許跨案件 batch、逐日期不同 actor／reason、部分成功、補償式 commit 或 client 指定執行順序。
+  - 不修改既有單日休假／順延／代班業務演算法、最多四段、歷史保護或付款／月結／工時鎖。
+- Observability: not_required
+
+##### Module: AssignmentScheduleIntegrityMigration
+- Sub Map: root
+- Type: script
+- State: `planned`
+- Source: scripts/migrate_assignment_schedule_integrity.py
+- Dependencies: [PaymentSchema, MultiCaregiverScheduleSchema]
+- Description: 以預設 check、明確 apply 的可稽核 live-DB migration，驗證正式 staff_schedule 的 assignment ownership 並新增 `UNIQUE(assignment_id, work_date)`；不回填 legacy NULL assignment、不刪除或自動修復衝突排班。
+- Complexity: medium
+- Input:
+  - mode: 預設 check；只有明確 --apply 才允許新增唯一索引
+  - database_config: 由正式環境來源取得且不得輸出密碼的 MySQL 連線設定
+  - report_path: 可選的 manifest 輸出路徑；未指定時只輸出 UTF-8 JSON stdout
+- Output:
+  - migration_manifest: 模式、schema 前置檢查、索引狀態、重複日期、ownership 衝突、apply 與 post-check 結果
+- Algorithm:
+  - 讀取 INFORMATION_SCHEMA 驗證 staff_schedule.assignment_id 欄位與 fk_staff_schedule_assignment 已存在；欄位或外鍵不存在時不得繼續查詢依賴 assignment_id 的 ownership／duplicate SQL。
+  - 索引 metadata 必須同時接受 tuple row 與 mapping／DictCursor row；mapping key、索引名稱及欄位名稱均以大小寫無關方式正規化，並依 SEQ_IN_INDEX 明確重建及驗證欄位順序。
+  - 檢查所有 assignment_id 非 null 排班：assignment 必須存在，且 staff_schedule.case_no／staff_id 必須分別等於 case_staff_assignments.case_no／staff_id；不符合者列入 manifest 並 fail-closed。
+  - 以 `GROUP BY assignment_id, work_date HAVING COUNT(*) > 1` 列出所有正式 assignment 同日重複；保留 schedule ids、case_no、staff_id、work_date 供人工處理，不刪除、不合併、不挑選勝出列。
+  - 確認既有 `ukey_staff_date(staff_id, work_date)` 仍為唯一索引；不得移除或放寬同一月嫂同日跨 assignment 的衝突保護。
+  - check 模式只輸出 manifest；--apply 必須先完成初次檢查，再於 ALTER 緊接之前以同一 connection／cursor 第二次呼叫完整 pre-check，且只能依第二次結果決定是否執行 `ALTER TABLE staff_schedule ADD UNIQUE KEY uq_staff_schedule_assignment_date (assignment_id, work_date)`。
+  - apply 後重新讀取 INFORMATION_SCHEMA 驗證 canonical index 為唯一、欄位順序精確且既有 ukey_staff_date 仍存在；任一 post-check 為 false 時必須加入明確 error、overall success 為 false 且 CLI 非零結束。MySQL ALTER 為 atomic DDL 且隱式提交，失敗只回報，不宣稱 transaction rollback。
+- Invariants:
+  - 預設模式不得執行 ALTER、INSERT、UPDATE、DELETE、TRUNCATE 或 DROP；只有明確 --apply 可執行單一 ADD UNIQUE KEY。
+  - assignment_id IS NULL 的 legacy rows 必須原樣保留且排除於 ownership／assignment-date 重複判定；不得以 case_no、staff_id、日期或唯一候選自動回填。
+  - assignment_id 非 null 時必須同時滿足 assignment 存在、case_no 相等、staff_id 相等；任何 orphan 或 ownership mismatch 均阻止 apply。
+  - canonical 索引名稱固定 `uq_staff_schedule_assignment_date`，欄位順序固定 `(assignment_id, work_date)` 且 non_unique=0；同名錯誤索引、反向欄位順序或非唯一索引必須 fail-closed，不得 drop／rename／覆寫。
+  - 既有 `ukey_staff_date(staff_id, work_date)` 必須保持唯一且欄位順序不變；migration 不得刪除、替換或放寬它。
+  - 已存在完全等價的其他名稱唯一索引時不得重複新增；manifest 必須標記 equivalent_index_review_required 並停止 apply，由人類決定是否接受命名漂移。
+  - manifest 必須 deterministic、UTF-8 JSON、依 business key 排序；GROUP_CONCAT 聚合值須在 SQL 或 Python 顯式排序，不得依賴資料庫未保證的列順序。
+  - manifest 與 stdout／report 的所有錯誤必須經秘密遮罩，不得包含 DB 密碼、完整 DSN 或其他秘密；不得用預設密碼例外放寬測試。
+  - --apply 在 ALTER 前必須重跑同一 connection 的全部前置檢查，第二輪發現任何新 ownership／duplicate／schema／index 錯誤時不得 ALTER。ALTER 因並行新增重複列失敗時須回報遮罩後的錯誤並停止，不得 commit、刪資料或重試。
+  - ALTER 成功只代表 DDL 已執行，不等於 migration 驗收成功；canonical 或 ukey_staff_date post-check 任一失敗時，manifest 必須標記 post_check_failed 且 CLI exit code 非零。
+  - migration 只新增 assignment-date 唯一索引；不得修改 assignment、staff_schedule rows、外鍵、既有索引、薪資、月結或日期鎖定資料。
+  - 測試必須證明 apply 使用同一 connection／cursor 執行兩輪完整 pre-check，並模擬第一輪乾淨、第二輪新增 ownership mismatch 或 duplicate 時完全不執行 ALTER。
+  - 測試必須證明 post-check 缺少 canonical index 或既有 ukey_staff_date 時回報失敗且 CLI 語意為非零，不得只檢查 post_check 非 null。
+  - 測試必須涵蓋 mixed／upper-case mapping metadata、tuple metadata、SEQ_IN_INDEX 反序輸入、同名錯誤規格、非唯一索引及反向欄位順序。
+  - 測試必須涵蓋 ALTER duplicate-key 例外：不 commit、不 retry、不執行任何資料修復 SQL，並驗證輸出不洩漏注入測試用的 password／DSN。
+  - 測試必須證明 ownership 與 duplicate 查詢都排除 assignment_id IS NULL，並覆蓋 orphan、case mismatch、staff mismatch 與 deterministic 聚合排序。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_schedule_integrity_migration.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-schedule-integrity-migration"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "py_compile", "scripts\\migrate_assignment_schedule_integrity.py"], "cwd": "project", "timeout": 60, "expect_exit": 0}
+- Non Goals:
+  - 不回填或覆核 assignment_id IS NULL 的 legacy 排班。
+  - 不刪除、合併、改寫或自動修復任何重複／ownership 衝突列。
+  - 不改變同日分時段政策，不建立日期鎖定、代班事件、assignment 或薪資資料。
+- Observability: not_required
+
+##### Module: LegacySameDayScheduleRelaxationRetirement
+- Sub Map: root
+- Type: database_schema
+- State: `planned`
+- Source: db/schema_parts/100_staff_schedule_allow_same_day_multiple_assignments.sql
+- Description: 退休會移除 `staff_schedule.ukey_staff_date(staff_id, work_date)` 的 legacy schema part；保留既有檔名以相容 lexical loader，但改為 fail-closed、可重跑的 canonical staff-date 唯一鍵守衛，禁止刪除或放寬同一月嫂同日衝突保護。
+- Complexity: medium
+- Input:
+  - staff_schedule_schema: 既有 staff_schedule table、ukey_staff_date metadata 與可能存在的 staff_id/work_date 重複列
+  - loader_order: DatabaseSchemaLoader 依 schema part 的 path.name lexical order 載入，`100_...sql` 會早於 `20_...sql`
+- Output:
+  - canonical_staff_date_guard: `ukey_staff_date(staff_id, work_date)` 保持或安全恢復為唯一索引
+- Algorithm:
+  - 先由 INFORMATION_SCHEMA 驗證 staff_schedule 存在；不存在時 fail-closed，不得假裝退休成功。
+  - 依 INDEX_NAME、NON_UNIQUE、SEQ_IN_INDEX 與 COLUMN_NAME 驗證 canonical `ukey_staff_date`。若名稱、唯一性與欄位順序完全正確，僅執行無副作用成功分支。
+  - 若同名索引存在但不是唯一 `(staff_id, work_date)`，執行可由 PREPARE 支援且包含固定 review-required sentinel 的 deterministic failure statement；不得 DROP、RENAME、覆寫或另建同名索引。
+  - 若 canonical 索引缺失，先以 `GROUP BY staff_id, work_date HAVING COUNT(*) > 1` 檢查全部重複。存在任何重複時執行包含固定 duplicate-data sentinel 的 deterministic failure statement並保留資料原狀，不挑選勝出列、不刪除、不合併。
+  - 僅在 canonical 索引缺失、沒有等價異名唯一索引且沒有重複列時，執行單一 `ALTER TABLE staff_schedule ADD UNIQUE KEY ukey_staff_date (staff_id, work_date)`。
+  - 若存在完全等價但名稱不同的唯一索引，執行包含固定 equivalent_index_review_required sentinel 的 deterministic failure statement；不得重複新增、刪除或重新命名。
+  - 所有動態 SQL 必須是 MySQL 官方允許 PREPARE 的單一 statement，且由 DatabaseSchemaLoader 直接執行；不得使用不可 PREPARE 的 SIGNAL、DELIMITER、procedure 或多 statement compound body。失敗分支可使用只讀且必定失敗的固定 sentinel SELECT，但不得引用、輸出或改寫業務資料。
+- Invariants:
+  - 本節點不得出現或執行 `DROP INDEX`、`DROP KEY`、`DROP CONSTRAINT`、`RENAME INDEX`，不得放寬同一月嫂同日唯一性。
+  - 不得 INSERT、UPDATE、DELETE、TRUNCATE、REPLACE 或回填任何 staff_schedule、assignment、payment、monthly settlement、日期鎖定及稽核資料。
+  - 已存在正確 canonical 索引時必須 idempotent；重跑不得新增第二個索引或改變 schema/data。
+  - 同名錯誤索引、異名等價索引及 staff-date 重複資料都必須 fail-closed 並要求人工覆核，不得自動修復或推測。
+  - fail-closed 分支必須產生可識別的固定 sentinel error，不得使用 `SELECT 1`、warning-only 表達式或受 sql_mode 影響而可能成功的運算；錯誤 statement 必須無 DDL/DML 副作用。
+  - 本節點只守護 `ukey_staff_date(staff_id, work_date)`；不得新增 `UNIQUE(assignment_id, work_date)`，後者仍由 AssignmentScheduleIntegrityMigration 負責。
+  - 必須以實際 lexical loader 順序驗證 `100_...sql` 是目前第一個 schema part，且其內容在 MultiCaregiverScheduleSchema 執行前亦安全。
+  - 測試必須證明正確索引時無 ALTER、缺索引且無重複時只執行一次 ADD UNIQUE、重複資料時無 ALTER、同名錯誤或異名等價索引時無 DROP／ADD／RENAME。
+  - 冪等測試必須使用 stateful schema mock 或 isolated MySQL：第一次缺索引時執行 ADD 後更新 metadata，對同一 schema 第二次完整執行時只能走成功 no-op；兩輪合計恰好一次 ADD UNIQUE。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_legacy_same_day_schedule_relaxation_retirement.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-legacy-same-day-relaxation-retirement"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不新增 assignment-date 唯一索引，不建立休假／代班事件、assignment、排班列或薪資資料。
+  - 不清理現有重複 staff-date 排班；衝突資料只阻止 constraint 恢復並交由人工處理。
+  - 不修改 DatabaseSchemaLoader 的排序規則或重新命名其他 schema parts。
+- Observability: not_required
+
 ##### Module: ClientIdentityStatusSourceMigration
 - Sub Map: root
 - Type: script
@@ -472,7 +871,7 @@
 - Type: database_schema
 - State: `planned`
 - Source: db/schema_parts/95_multi_caregiver_schedule.sql
-- Dependencies: [PaymentSchema]
+- Dependencies: [PaymentSchema, AssignmentScheduleIntegrityMigration]
 - Description: 為日層級排班建立到正式服務指派的可空關聯，以及無法確定歸屬之歷史排班覆核佇列；不自動回填或推測任何既有排班資料。
 - Complexity: medium
 - Input:
@@ -482,45 +881,93 @@
   - staff_schedule.assignment_id: 排班列可選地連回正式服務指派
   - staff_schedule_assignment_reviews: 歷史排班或遷移時需要人工確認的歸屬覆核紀錄
 - Algorithm:
-  - 以可重跑的 additive migration 新增可空 `assignment_id` 欄位、索引與外鍵；不得刪除、重建或覆寫既有 `staff_schedule` 列。
-  - 建立每個排班列至多一筆的覆核表，保存待覆核原因、狀態、人工確認後的正式服務指派與稽核時間。
+  - 先驗證 `staff_schedule` 與 `case_staff_assignments` 均存在；任一缺失必須以固定 sentinel fail-closed，且不得執行後續 DDL。
+  - 依 INFORMATION_SCHEMA 驗證 `staff_schedule.assignment_id` 的型別、signedness 與 nullable 契約；缺少時只新增可空 BIGINT，既有同名但規格錯誤時 fail-closed，不得 ALTER／回填／推測。
+  - 驗證 assignment 查詢索引及外鍵的完整 metadata，而非只檢查名稱；外鍵必須一併核對欄位順序、目標表／欄位及 ON UPDATE／ON DELETE 均為 RESTRICT。缺少時只新增 canonical 定義，任何同名錯誤或異名等價定義都必須以固定 sentinel 交由人工覆核，不得 DROP、RENAME 或建立重複 constraint。
+  - 建立或驗證每個排班列至多一筆的覆核表，保存待覆核原因、狀態、人工確認後的正式服務指派與稽核時間；既有同名表必須逐項核對必要欄位型別、nullable、ENUM/default、主鍵、`UNIQUE(schedule_id)`、resolution CHECK，以及 schedule／resolved assignment 兩個外鍵與 RESTRICT actions，任一不符必須 fail-closed。
+  - 覆核表只能在不存在時透過單一可 PREPARE 的 CREATE TABLE 建立；不得無條件執行 CREATE TABLE IF NOT EXISTS 來掩蓋既有錯誤定義。
+  - 對同一 stateful schema 完整執行兩次；第一輪只能補齊缺少的 additive objects，第二輪不得執行任何 ALTER／CREATE 或其他 mutating DDL，兩輪不得寫入或改寫任何既有排班及覆核資料。
   - 本節點只提供資料結構；不以日期、月嫂、訂單或時數相似性推測既有列的 `assignment_id`，也不寫入覆核紀錄。
 - Invariants:
   - `staff_schedule.assignment_id` 為 NULL 時須保留既有排班相容性；非 NULL 時必須外鍵連回 `case_staff_assignments.id`。
-  - migration 必須可重跑且不得刪除、重建、覆寫或自動回填既有 `staff_schedule`。
+  - migration 必須可重跑且不得刪除、重建、覆寫或自動回填既有 `staff_schedule`；不得出現 INSERT、UPDATE、DELETE、REPLACE、TRUNCATE、DROP 或 RENAME。
+  - 不得只以欄位、索引、constraint 或資料表名稱存在就視為正確；同名錯誤與異名等價 metadata 必須 deterministic fail-closed。
   - 覆核表每個 `schedule_id` 最多一筆，且已解決列必須連回明確的 `resolved_assignment_id`；不得以候選推測取代人工決定。
-  - 不得放寬既有 `staff_schedule` 的月嫂單日唯一性約束。
+  - 覆核狀態為 `review_required` 時 `resolved_assignment_id`、`resolved_by`、`resolved_at` 必須皆為 NULL；狀態為 `resolved` 時三者必須皆非 NULL。
+  - 不得放寬或重建既有 `staff_schedule.ukey_staff_date(staff_id, work_date)`；不得新增第二份 assignment-date unique，該約束由 AssignmentScheduleIntegrityMigration 擁有。
+  - fail-closed 必須使用可由 MySQL PREPARE 執行、無資料副作用且包含固定 sentinel 的單一 statement；不得使用 SIGNAL、DELIMITER、procedure 或 compound body。
+  - 測試必須以 stateful metadata 模擬第一輪建立全部缺少物件、第二輪完整重跑，並斷言第二輪零 ALTER／CREATE；不得只排除 ADD COLUMN／INDEX／CONSTRAINT。
+  - 測試必須覆蓋「覆核表九個欄位名稱皆存在但型別、nullable、ENUM/default、唯一鍵、CHECK 或任一外鍵/action 錯誤」的情境，且每種錯誤均須固定 sentinel fail-closed、零修復 DDL。
+  - 測試必須覆蓋 assignment canonical 外鍵欄位／目標正確但 ON UPDATE 或 ON DELETE action 錯誤的情境；不得將其誤判為 exact match。
   - 日期區段不得重疊、月嫂請假隔離、排班生成與實際時數計算均由後續服務節點執行；本 Schema 不實作該等商業規則。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-c", "from pathlib import Path; s=Path('db/schema_parts/95_multi_caregiver_schedule.sql').read_text(encoding='utf-8'); assert 'staff_schedule_assignment_reviews' in s; assert 'assignment_id' in s; assert 'FOREIGN KEY (assignment_id)' in s; assert 'UNIQUE KEY uq_schedule_review' in s; print('MULTI CAREGIVER SCHEDULE SCHEMA DECLARED')"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "MULTI CAREGIVER SCHEDULE SCHEMA DECLARED"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_schema.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-multi-caregiver-schedule-schema"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
 
 ##### Module: MultiCaregiverAssignmentRules
 - Sub Map: root
 - Type: service
-- State: `planned`
-- Source: services/multi_caregiver_assignment_rules.py::validate_non_overlapping_assignment_interval
-- Description: 驗證同一訂單內月嫂服務區段的起訖日期必填、為連續且含端點的日期區間，並拒絕任兩有效區段重疊。
+- State: `dirty`
+- Source: services/multi_caregiver_assignment_rules.py::AssignmentPlanTransitionConflict,validate_non_overlapping_assignment_interval,validate_assignment_plan_transition
+- Dependencies: [MultiCaregiverScheduleSchema, AssignmentScheduleLeaveSubstitutionEventSchema]
+- Description: 以純函式驗證正式案件完整 assignment transition plan：套用後最多四個未取消區段、全案日期完整且單日唯一、依 Server 判定的歷史營運 facts 分級保護 ownership、未來生效切段、休假後續區段順延、單日代班，以及同一 original assignment 的多日期 aggregate 休假處置；同一月嫂可在代班前後持有不同不連續 assignment。
 - Complexity: medium
 - Input:
-  - candidate_start_date: 新增或調整中的服務起日（ISO 日期字串或 date）
-  - candidate_end_date: 新增或調整中的服務迄日（ISO 日期字串或 date）
-  - existing_assignments: 同案既有指派的 id、status、assigned_start_date 與 assigned_end_date
-  - candidate_assignment_id: 調整既有指派時可排除自身 id
+  - case_no: trim 後非空的案件編號
+  - database_current_date: 由交易服務在同一 transaction 取得的精確 date；本節點不得自行讀 clock
+  - effective_date: 本次未來生效日；defer_following_assignments 聚合多個休假日時為 canonical defer items 中最早的原始休假日期，batch_leave_resolution 時為 canonical batch 中最早的原始休假日期
+  - current_case_start_date: 變更前案件服務起日
+  - current_case_end_date: 變更前案件服務迄日
+  - proposed_case_start_date: 變更後案件服務起日
+  - proposed_case_end_date: 變更後案件服務迄日
+  - operation_kind: segment_reconfigure、single_day_substitute、defer_following_assignments 或 batch_leave_resolution
+  - historical_fact_state: 由 Server 依 DB facts 判定的 bootstrap、unlocked 或 locked；不得接受 API client 自報
+  - current_assignments: 現況 assignment exact rows，含 id、case/staff/status、區間、kind、original_assignment_id、substitution_work_date
+  - proposed_assignments: 套用後 existing id 或 new client key 的完整 assignment rows
 - Output:
-  - validated_interval: 正規化後、端點皆包含且與其他有效指派不重疊的日期區段
+  - assignment_transition_plan: canonical before/after 案件區間與 assignment rows、created／retained／truncated／cancelled facts、effective_date、逐日唯一 ownership 與未來移除日期
+  - transition_conflict: AssignmentPlanTransitionConflict(code, details)，表示可預期、可轉成 Preview canonical blocked reason 的規則拒絕。
 - Algorithm:
-  - 將輸入正規化為日期，拒絕缺漏、非 ISO 日期或起日晚於迄日的候選區段。
-  - 略過已取消與正在調整的自身指派；其餘有效既有指派若缺少任一服務日期，停止並要求人工補齊，不以空值推測不重疊。
-  - 以 `candidate_start <= existing_end AND candidate_end >= existing_start` 判定含端點重疊；重疊即拒絕。
-  - 回傳正規化後起訖日；A 結束於 10 日而 B 從 11 日開始視為合法。
+  - 嚴格驗證 exact mappings、非 bool ids、精確 date、case ownership、唯一 existing id／new key、合法 status/kind；拒絕未知欄位及任何推測。
+  - 依日期 canonicalize current/proposed；current assignments 非空時必須完整覆蓋 current 案件含端點區間，proposed 一至四個未取消 assignment rows 必須無空缺、重疊、越界並完整覆蓋 proposed 案件含端點區間，每日恰一 owner。四段上限計 assignment rows，不計 distinct staff。
+  - [目前代碼規格差異] `segment_reconfigure` 在 current assignments 完全為空時允許建立第一份完整正式配置，支援未來 legacy 案件從 orders.staff_id 過渡為 assignment-owned 模型；其他 operation 仍要求完整 before ownership，且 proposed plan 一律完整驗證。orders.staff_id 不傳入本純規則，也不成為正式 ownership。
+  - 依 historical_fact_state 驗證 database_current_date 前的變更：locked 一律禁止直接改寫；unlocked 允許明確更正但輸出必須標記 requires_audit；bootstrap 允許建立或重整尚無正式營運 facts 的歷史配置。當日可作 future 生效日；一般已開始區段變更須保留至 effective_date-1，並由新 assignment 自 effective_date 建立。
+  - single_day_substitute 必須建立全新、恰一日且 link 原 assignment 的獨立 substitute assignment；不得重用原 assignment 或同案既有 assignment。原 assignment 不得同時擁有代班日；前後恢復同一月嫂時 prefix/suffix 為不同 assignments。
+  - defer_following_assignments 只允許在 assignment row 數、id、staff、status、kind、original links 與順序不變時，由 `proposed_case_end_date - current_case_end_date` 唯一推導正整數 D；將包含最早原始休假日的 affected assignment 結束日精確延長 D 天，所有後續 assignments 的起訖日等量後移 D 天，更早 assignments 完全不變；不得建立、刪除、合併、重排、改成其他月嫂或只延長訂單日期。Batch caller 後續須證明 D 等於 canonical defer item 數，D=1 行為必須與既有單日順延完全相同。
+  - batch_leave_resolution 是 AC-clar-008 專用的窄化 aggregate operation：所有 new substitute rows 必須為恰一日、具有唯一 new key／substitution_work_date、共同連回同一個存在的 original assignment，且該日期在 before ownership 屬於 original、在 after ownership 僅屬對應 substitute。非 substitute 日期仍由 original staff 的 formal fragments 持有；不得以 segment_reconfigure 放寬或逐項 fold。
+  - batch_leave_resolution 的 D 仍只由 `proposed_case_end_date - current_case_end_date` 推導且允許 D=0 pure substitute 或 D>=1 mixed defer；target 以前 existing rows 不變，target 以後 existing rows 的 identity／staff／status／kind／original links／相對順序不變且起訖等量後移 D。Batch caller 必須另證 D 等於 canonical defer item 數、new substitute rows 與 canonical substitute items 一一對應且無額外／遺漏。
+  - 產生穩定 transition facts 與逐日 ownership；舊 interval validator 只可保留為相容 wrapper，不得再作完整配置唯一 gate。
 - Invariants:
-  - 同一訂單不得有兩位月嫂在相同日期服務；本系統不支援同日分時段。
-  - 只有狀態為 cancelled 的既有指派可略過；未填日期的有效舊指派不得靜默繞過檢查。
-  - 此規則為純函式，不讀寫資料庫、排班列、行事曆或薪資資料。
-  - 實際服務時數必須由後續排班節點依各月嫂的工作日計算；此規則不得用連續日期直接覆寫 `actual_hours`。
+  - 最多四個有效 assignment 區段；相同 staff 可在被代班隔開後再次出現，不得以 staff 唯一或 distinct staff 數實作上限。
+  - 歷史日期是否可改不得只由 work_date 與 database_current_date 比較。historical_fact_state=bootstrap 時可建立或重整尚無 assignment-owned schedule、休假／代班事件、人工時數調整、付款或月結 facts 的歷史配置；unlocked 時可明確更正但必須由 Apply 寫 audit；locked 時不得直接改寫，必須走沖正、重新結算或獨立歷史更正流程。
+  - historical_fact_state 必須由 Server 依 DB facts 判定，API client 不得傳入 allow_historical_edit、bootstrap 或等價 bypass；本純函式只驗證 canonical enum，不自行讀 DB。
+  - 不論 historical_fact_state，皆不得在未經明確歷史更正命令時 UPDATE 原 assignment.staff_id 轉移既有服務與薪資 ownership；取消列保留但不占日期或四段。
+  - database_current_date 必須保留資料庫實際日期，允許早於 current/proposed 案件區間或晚於兩者；不得要求其位於任一案件期間內，亦不得 clamp、替換或推測。未來案件仍可預覽；案件結束後若無合法未來 effective_date，變更自然拒絕。
+  - current 與 proposed 案件區間必須分別精確提供；不得以單一區間同時驗證 before/after。案件縮短不得移除 database_current_date 前的歷史日期，案件延長不得改變既有歷史 ownership。
+  - `segment_reconfigure` 唯一可接受零筆 current assignments 作為首次正式配置 bootstrap；一旦存在任何有效 current assignment，before 全期間覆蓋要求恢復生效。此差異節點維持 dirty，待查核是否要以專用 bootstrap operation 取代現有例外。
+  - 代班一定是獨立單日 assignment 且連結 original_assignment_id/work_date；同日原與代班不得雙重 ownership。
+  - defer_following_assignments 必須保持 assignment row 數、id、staff、status、kind、original_assignment_id、substitution_work_date、服務順序與區段連續性；D 必須由 `proposed_case_end_date - current_case_end_date` 唯一推導且 `D >= 1`，不得接受額外 defer_days 參數。effective_date 為最早原始休假日期且必須位於 affected assignment 變更前區間；affected assignment 起日不變、迄日增加 D 天，所有後續 rows 起訖日均增加相同 D 天，更早 rows 完全不變。Batch caller 須另行證明 D 等於 canonical defer item 數及每個休假 schedule 的 exact ownership；所有新日期仍須由 caller 執行檔期、日期鎖與付款／月結門禁，D=1 的輸出與拒絕行為不得改變。
+  - batch_leave_resolution 不得改變 segment_reconfigure、single_day_substitute 或 defer_following_assignments 的既有行為。所有 substitute rows 必須指向同一 original assignment、具有唯一日期／new key且恰一日；original staff formal fragments 必須完整持有其餘日期。D=0 時後續 existing rows 不得位移；D>=1 時後續 rows 必須等量位移 D，且不得將 substitute 日重複計為 defer 補足日。
+  - batch_leave_resolution 允許恰一筆或多筆 substitute rows；恰一筆 substitute 且 D=0 是合法的 pure-substitute transition。
+  - batch_leave_resolution 的 well-formed 業務拒絕必須使用 AssignmentPlanTransitionConflict 與固定 code：batch_leave_target_mismatch、batch_substitute_lineage_invalid、batch_substitute_date_duplicate、batch_original_staff_ownership_changed、batch_defer_shift_invalid、assignment_row_limit_exceeded、assignment_daily_ownership_invalid、historical_ownership_locked；details 必須為 JSON-safe 且包含可定位的 assignment／日期／expected-actual facts。Malformed mapping、非法型別、未知欄位或 dependency 不可能狀態仍以 ValueError 原樣失敗。
+  - 調整草稿可暫時未達訂單總時數，但每次 Preview 必須重算並顯示差額；任何正式 Apply 都必須以最新資料驗證所有未取消 assignments 的 actual_hours 總和精確等於訂單計畫時數（目前為 orders.service_days × orders.service_hours_per_day）。成功寫入後薪資直接由該正式排班自動計算；建立應付款或月結時再從最新正式資料重算，不另等待人工薪資確認。本純日期規則不得自行推測 actual_hours。
+  - 所有 schedule day 預設 is_double_pay=false；只有工會人員對明確 assignment_id、schedule_id、work_date 手動設定且該日 is_work_day=true 時才可計入雙倍薪。國定假日不得自動啟用，薪資金額由 AssignmentPayrollReconciliationService 核對。
+  - deterministic pure；不得讀 DB/clock/env/filesystem，不計薪、不寫 assignment/schedule/event/payment。
+  - 可預期的 assignment transition 拒絕必須拋出 AssignmentPlanTransitionConflict 並提供固定 code；不得要求 caller 解析一般 ValueError 訊息。輸入型別錯誤或不可能狀態仍須明確區分，不得偽裝成可套用的 blocked plan。
+  - 驗收須逐案覆蓋合法1–4／第5段、同 staff prefix-substitute-suffix、gap/overlap/左右越界、bootstrap/unlocked/locked 歷史狀態、client 歷史 bypass、today/future split、單段與多段順延、D=1 相容、單段與多段 D=2／D=3、D<=0、affected／後續 row 非等量位移、最早原始休假 effective_date 位於 affected row 與區間外拒絕、row count／id／staff／status／kind／original links／順序改寫拒絕、所有代班重用與 ownership 錯誤、batch_leave_resolution pure multi-substitute、substitute+D=1／D=2／D=3、duplicate substitute date、跨 original target、非法單日 lineage、D=0 後續零位移、四段／第五段 typed conflict、stable code/details、既有三種 operation 回歸、嚴格 mappings、穩定輸出與 AST capability guard。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_assignment_rules.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_assignment_rules.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-multi-caregiver-assignment-rules"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Non Goals:
+  - 不查詢付款、月結、排班或日期鎖；鎖定 facts 由後續 transaction service 提供與裁決。
+  - 不建立、更新或取消 assignment，不寫日排班、代班事件、actual_hours 或薪資。
+  - 不接受 raw batch items、不決定 ordinal／duplicate policy／fingerprint，亦不證明 D 與 defer item 數或 substitute rows 與 canonical items 一一對應；這些由 AssignmentScheduleLeaveSubstitutionBatchTransitionCalculation 擁有。
 - Observability: not_required
 
 ##### Module: MultiCaregiverScheduleGenerationService
@@ -538,6 +985,7 @@
   - actual_hours: 初始工作日數乘 orders.service_hours_per_day 的結果
 - Algorithm:
   - 鎖定目標服務指派、訂單與同案有效指派，呼叫 MultiCaregiverAssignmentRules 驗證服務日期完整且不重疊。
+  - 在任何 INSERT／UPDATE 前先驗證 orders.service_hours_per_day 為正 Decimal，並鎖定檢查該 assignment 是否已有人工 actual_hours_adjustments、非 cancelled staff_payments 或有效月結明細；任一薪資／人工調整鎖存在即拒絕且零寫入。
   - 讀取該月嫂 weekly_rest_days 與國定假日，為服務區段的每一天決定初始 is_work_day。
   - 鎖定同月嫂同日既有排班；若已屬於其他指派或 legacy 列即拒絕，若已屬於本指派則保留既有人工調整、不覆寫。
   - 僅新增缺少的 assignment_id 排班列，依本指派 is_work_day 列數乘訂單每日服務時數更新 actual_hours；planned_hours 不變。
@@ -547,6 +995,13 @@
   - 已存在同月嫂同日的其他案件、其他指派或 assignment_id 為 NULL 的 legacy 排班時必須拒絕，禁止 silent overwrite。
   - 重新執行同一指派時僅補足缺列，不得覆寫既有 is_work_day、is_double_pay 或 notes。
   - 已存在非 cancelled staff_payments 或有效月結明細的指派不得產生或重建排班，避免 actual_hours 與薪資快照不一致。
+  - 已存在任何 actual_hours_adjustments 的指派不得重新計算或覆寫 actual_hours；必須要求人工覆核，不得以最新日層級排班取代已確認的 assignment 級時數。
+  - service_hours_per_day 缺漏、非數值、非有限值或小於等於零時，必須在新增排班列前 fail-fast；不得依賴外層 rollback 掩蓋先寫後驗證。
+  - 測試必須證明人工 actual_hours adjustment、付款鎖、月結鎖及無效 service_hours_per_day 均在任何 INSERT／UPDATE 前拒絕，且 caller-owned cursor 路徑也沒有部分寫入。
+  - 鎖定檢查必須對 `actual_hours_adjustments WHERE assignment_id = %s ... FOR UPDATE` 執行存在性查詢；不得以 staff_payments 或月結查詢結果推測沒有人工調整。
+  - 每日時數必須以 `Decimal(str(value))` 安全正規化，捕捉缺值、非數字及無效 Decimal，並以 `is_finite()` 拒絕 NaN、Infinity 與 -Infinity；此驗證須發生在第一個 staff_schedule INSERT 之前。
+  - 驗收測試至少必須分別注入 actual-hours adjustment、None、非數字字串、Decimal NaN、正負 Infinity、零及負數；每案都要斷言沒有 `INSERT INTO staff_schedule`、沒有 `UPDATE case_staff_assignments`，不能只斷言外層 rollback。
+  - caller-owned cursor 測試必須直接呼叫 transaction 版本並重複驗證上述零寫入條件，因為該路徑不擁有 rollback。
   - 不得建立或調整 staff_payments、薪資手動調整或結算資料。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_generation.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
@@ -557,7 +1012,7 @@
 - Type: service
 - State: `planned`
 - Source: services/multi_caregiver_schedule_generation.py::generate_assignment_schedule_in_transaction
-- Dependencies: [MultiCaregiverScheduleSchema, MultiCaregiverAssignmentRules]
+- Dependencies: [MultiCaregiverScheduleSchema, MultiCaregiverAssignmentRules, MultiCaregiverScheduleGenerationService]
 - Description: 在呼叫端已開啟的單一資料庫交易中，為一筆正式月嫂指派補足其擁有的日排班，並依月嫂固定休假與國定假日重新計算 initial actual_hours；任何錯誤交給呼叫端統一 rollback。
 - Complexity: medium
 - Input:
@@ -568,6 +1023,7 @@
   - actual_hours: 初始工作日數乘 orders.service_hours_per_day 的結果
 - Algorithm:
   - 以傳入 cursor 鎖定目標服務指派、訂單與同案有效指派，呼叫 MultiCaregiverAssignmentRules 驗證服務日期完整且不重疊。
+  - 完整沿用 MultiCaregiverScheduleGenerationService 的每日時數正規化、人工 actual_hours adjustment、付款與月結鎖定檢查，且全部必須發生在第一個 INSERT／UPDATE 前。
   - 讀取該月嫂 weekly_rest_days 與國定假日，鎖定同月嫂同日既有排班；其他指派或 legacy 列均拒絕，本指派既有列則保留。
   - 僅新增缺少的 assignment_id 排班列，依本指派 is_work_day 列數乘訂單每日服務時數更新 actual_hours。
   - 回傳新增列與 actual_hours，不得 commit、rollback、close 或重新取得 connection；任何例外必須原樣傳回呼叫端。
@@ -577,6 +1033,13 @@
   - 已存在同月嫂同日的其他案件、其他指派或 assignment_id 為 NULL 的 legacy 排班時必須拒絕，禁止 silent overwrite。
   - 重新執行同一指派時僅補足缺列，不得覆寫既有 is_work_day、is_double_pay 或 notes。
   - 已存在非 cancelled staff_payments 或有效月結明細的指派不得產生或重建排班，避免 actual_hours 與薪資快照不一致。
+  - 已存在任何 actual_hours_adjustments 時必須拒絕；service_hours_per_day 缺漏、非數字、NaN、正負 Infinity、零或負數時必須在任何 INSERT／UPDATE 前拒絕。
+  - transaction 路徑必須直接重用已核准的 generation 核心，不得複製一份較寬鬆的排班或薪資鎖規則。
+  - 測試必須直接呼叫 `generate_assignment_schedule_in_transaction`，分別覆蓋人工時數調整、付款、月結及所有無效 Decimal 邊界，並逐案斷言零 `INSERT INTO staff_schedule`、零 `UPDATE case_staff_assignments`。
+  - 成功與失敗測試都必須證明不呼叫 get_connection、不 commit、不 rollback、不 close；例外不得被包裝成不同型別或吞掉。
+  - `pytest -k transaction` 必須實際收集上述全部 transaction 案例；至少包含成功、人工 adjustment、付款、月結、None、非數字、NaN、正 Infinity、負 Infinity、零及負數，不得以 public `generate_assignment_schedule` 測試替代。
+  - transaction 例外傳遞測試必須讓共用核心拋出可識別的自訂例外實例，並斷言呼叫端收到同一實例；不得 catch 後改型別、改訊息或回傳失敗物件。
+  - transaction 測試的 fake cursor 不得提供 commit、rollback 或 close 作為可呼叫捷徑；所有案例皆須把 get_connection monkeypatch 為立即失敗，證明 wrapper 沒有隱性 transaction boundary。
   - 不得建立或調整 staff_payments、薪資手動調整或結算資料；不得 commit、rollback、close 或建立新的資料庫 connection。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_generation.py", "-k", "transaction", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
@@ -588,7 +1051,7 @@
 - State: `planned`
 - Source: services/multi_caregiver_schedule_adjustment_service.py::adjust_assignment_schedule_day
 - Dependencies: [MultiCaregiverScheduleSchema]
-- Description: 調整既有正式服務指派內單日的請假、出勤與雙倍薪設定，並只重算該指派的 actual_hours。
+- Description: 調整既有正式服務指派內單日的請假、出勤與雙倍薪設定，重算目標指派 actual_hours，並在同一交易驗證全案 actual_hours 加總仍填滿訂單計畫時數。
 - Complexity: medium
 - Input:
   - assignment_id: 正式服務指派 id
@@ -599,26 +1062,737 @@
 - Output:
   - adjusted_schedule_day: 調整後的目標 assignment_id 排班列
   - actual_hours: 目標指派重算後的實際服務時數
+  - order_planned_hours: orders.service_days × orders.service_hours_per_day
+  - case_actual_hours: 同案所有未取消 assignment 的 actual_hours 加總
 - Algorithm:
-  - 鎖定服務指派與訂單，驗證指派有效、日期完整且 work_date 位於指派的含端點區段內。
+  - 鎖定服務指派與訂單，讀取資料庫 CURRENT_DATE，驗證指派有效、日期完整、work_date 位於指派含端點區段內且不得早於 CURRENT_DATE；歷史服務日一律 fail-closed。
+  - 在任何排班 UPDATE 前，以有限且大於零的 Decimal 驗證 orders.service_hours_per_day，並鎖定檢查 actual_hours_adjustments、非 cancelled staff_payments 及有效月結明細；任一鎖存在即拒絕且零寫入。
   - 鎖定同月嫂同日排班；沒有目標列即拒絕，僅當 assignment_id 完全相同時更新 is_work_day、is_double_pay 與 notes。
   - 讀取並鎖定目標指派所有排班列，以 is_work_day 計數乘訂單每日服務時數更新 actual_hours；planned_hours 不變。
+  - 更新後鎖定同案所有未取消 assignment，以有限非負 Decimal 加總 actual_hours；若不精確等於 orders.service_days × orders.service_hours_per_day，整個 transaction rollback。
 - Invariants:
   - 月嫂 A 的請假、出勤或雙倍薪調整只能影響 A 自己 assignment_id 的排班與 actual_hours，不得更動月嫂 B。
   - 其他指派或 assignment_id 為 NULL 的 legacy 排班列一律拒絕覆寫；不執行 UPSERT、不刪除資料、不更新訂單整體結束日。
   - work_date 位於指派區段外、指派已取消、日期缺漏或尚無目標日排班列時必須拒絕。
-  - actual_hours 為目標指派日層級 is_work_day 數量乘 orders.service_hours_per_day；此時不檢查多月嫂總和。
+  - work_date 早於同一 transaction 內讀取的資料庫 CURRENT_DATE 時不得改寫月嫂、assignment、工作狀態、雙倍薪、備註、工時或薪資歸屬；不得接受呼叫端自報日期繞過歷史保護。
+  - is_work_day=false 時 is_double_pay 必須為 false；休假／未服務日不得同時標記雙倍薪。
+  - actual_hours 為目標指派日層級 is_work_day 數量乘 orders.service_hours_per_day；所有未取消 assignment 的 actual_hours 加總必須精確等於訂單計畫時數，不足或超額都不得 commit。
   - 已存在非 cancelled staff_payments 或有效月結明細的指派不得調整排班，避免 actual_hours 與薪資快照不一致。
+  - 已存在任何 actual_hours_adjustments 的指派不得重算或覆寫 actual_hours；必須要求人工覆核。
+  - service_hours_per_day 缺漏、非數字、NaN、正負 Infinity、零或負數時，必須在 `UPDATE staff_schedule` 前拒絕並 rollback；不得先改日列再依賴 rollback。
+  - 必須對 `actual_hours_adjustments WHERE assignment_id = %s LIMIT 1 FOR UPDATE` 執行獨立存在性查詢，且位於付款／月結檢查之後、目標日列 UPDATE 之前；測試須注入 adjustment row 並驗證固定 ValueError 與零兩種 UPDATE。
+  - Decimal 驗證必須先呼叫 `is_finite()`，再比較是否大於零，避免 NaN 比較拋出 InvalidOperation；所有缺漏、非數字與非有限／非正值都必須轉成同一明確 ValueError，不得讓測試以 `pytest.raises(Exception)` 放寬。
+  - 歷史保護測試必須使用固定 mock 資料庫日期與相對的前一日／同日，不得依賴測試主機 `date.today()`；前一日拒絕、同日允許，且決策必須來自 SQL `SELECT CURRENT_DATE` 結果。
+  - 本節點不得建立、切割、取消或移動任何 assignment，不得順延後續 assignment，不得建立代班 assignment 或代班日，也不得把順延／代班正式語意只寫入 notes。
+  - 測試必須覆蓋歷史日期、休假加雙倍薪、人工時數調整、付款、月結、所有 Decimal 邊界及全案總時數不足；前置驗證失敗須零 UPDATE，守恆失敗可在 transaction 內完成暫時 UPDATE 但必須零 commit 且一次 rollback。
   - 不得建立或調整 staff_payments、薪資手動調整或結算資料。
+- Non Goals:
+  - 不處理跨 assignment 順延、代班候選、代班獨立 assignment、append-only 休假／代班事件或樓層費重分配；這些必須由批次 Preview／Apply transaction 節點承接。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_adjustment_service.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionPreviewOrchestration
+- Sub Map: root
+- Type: service
+- State: `dirty`
+- Source: services/assignment_schedule_rest_date_service.py::preview_assignment_leave_resolution
+- Dependencies: [AssignmentScheduleRestDateService, AssignmentScheduleRestDateValidationHelpers, MultiCaregiverScheduleAdjustmentService, MultiCaregiverScheduleReadService, AssignmentScheduleConflictSnapshotService, AssignmentScheduleLeaveSubstitutionPreviewFromSnapshot, MultiCaregiverAssignmentRules, CaregiverSegmentAvailabilityInternalHelpers]
+- Description: 在既有 assignment 排休服務中唯讀編排一筆正式 assignment 的單日休假預覽；復用既有 ownership、排休日期、assignment transition 與檔期能力，只補上管理員明確選擇順延或代班後的 provisional assignment plan。
+- Complexity: medium
+- Input:
+  - case_no: trim 後非空的 canonical 案件編號
+  - original_assignment_id: 發生休假的原正式 assignment 正整數 id
+  - original_schedule_id: 被處置的原 assignment-owned 單日排班正整數 id
+  - work_date: 明確休假日期，必須等於 original_schedule_id.work_date
+  - resolution_type: defer_following_assignments 或 substitute
+  - substitute_staff_id: substitute 時必填的代班月嫂正整數 id；順延時必須為 null
+- Output:
+  - preview: ready、blocked 或 requires_review，及 canonical preview_fingerprint、provisional assignment plan、既有排班變更影響、availability conflicts、逐 assignment 服務日與時數 ownership 影響、blocking reasons、requires_confirmation
+  - expected_failure: 僅在 canonical Preview 無法形成時拋出 AssignmentLeaveResolutionDomainError；AssignmentScheduleConflictSnapshotDomainError 的 case_not_found 精確映射為 category=not_found、code=case_not_found、reason="case does not exist" 且 details 不變，assignment_identity_changed_during_snapshot 精確映射為 category=conflict、code 不變、reason="assignment identity changed while reading conflict snapshot" 且 details 不變。
+- Algorithm:
+  - 復用 AssignmentScheduleRestDateValidationHelpers 驗證正整數 id、精確日期與 resolution_type 組合，不建立第二套輸入正規化。
+  - 透過既有 MultiCaregiverScheduleReadService 唯讀取得 original assignment-owned schedule；透過 AssignmentScheduleConflictSnapshotService 一次取得案件 assignments、schedule、active lock、leave/substitution event、actual-hours adjustment、payment、settlement facts與資料庫 CURRENT_DATE。
+  - 僅捕捉 AssignmentScheduleConflictSnapshotDomainError 並依其 typed code 映射：case_not_found 轉為 AssignmentLeaveResolutionDomainError(not_found, case_not_found, "case does not exist", details 不變)；assignment_identity_changed_during_snapshot 轉為 AssignmentLeaveResolutionDomainError(conflict, assignment_identity_changed_during_snapshot, "assignment identity changed while reading conflict snapshot", details 不變)。不得解析 exception message。
+  - 由 Server 依 DB facts 判定 historical_fact_state：無既有操作與 ownership facts 為 bootstrap；有可更正但未鎖定 facts 為 unlocked；付款、月結或不可變 ownership facts 為 locked。API client 不得傳入或覆寫此狀態。
+  - 順延時復用 AssignmentScheduleRestDateService 的工作日補足概念，建立原區段補足一天且後續 assignments 依序後推的 provisional plan；不得直接執行既有 commit-owning 保存函式。
+  - 代班時只建立 provisional 獨立單日 substitute assignment command，明確連結 original_assignment_id 與 substitution_work_date。
+  - 以 MultiCaregiverAssignmentRules 驗證最多四段、完整覆蓋、無空缺重疊、server-derived historical_fact_state 與單日 substitution ownership。
+  - 將 AssignmentScheduleConflictSnapshotService 的 facts 傳給 CaregiverSegmentAvailabilityInternalHelpers，檢查所有新增或位移後 staff/date 的正式 assignment、排班與 active lock 衝突；不得自行重查相同資料表。
+  - 依 provisional schedule ownership 計算逐 assignment 服務日與時數影響；可信 canonical snapshot 可完成計算時，有衝突回傳 blocked、有人工覆核需求回傳 requires_review，全部通過才回傳 ready。
+  - 順延工時必須以 provisional work-day ownership 計算：原休假日不計入、延長補班日計入一次；不得直接以延長後日期區間天數重算而重複增加一天。
+  - 對 status、historical_fact_state、canonical assignment transition、schedule changes、availability conflicts、assignment service impacts、required_hours 與 provisional_actual_hours 使用穩定 JSON 序列化並產生 SHA-256 preview_fingerprint，供 Apply 在 transaction 內重算比對。
+- Invariants:
+  - Public Preview 必須只負責取得唯讀 canonical snapshot，並委派 AssignmentScheduleLeaveSubstitutionPreviewFromSnapshot 計算 plan 與 fingerprint；不得保留第二套 provisional plan 演算法。
+  - 本節點是既有 assignment 排休 domain 的薄編排函式，不得新增第二套 public Service 檔、第二套 schedule read、第二套 rest-date 保存或第二套 availability SQL。
+  - preview 必須完全唯讀；不得 INSERT、UPDATE、DELETE、commit、rollback、建立 connection-owned transaction、取得寫入 mutex、建立日期鎖或寫休假／代班事件。
+  - 一次只接受一個 original_schedule_id 的單日處置；管理員必須明確選擇 defer_following_assignments 或 substitute，系統不得自行選擇或新增 leave_only。
+  - original_schedule_id 必須精確屬於 original_assignment_id、case_no、原月嫂與 work_date；不得由 orders.staff_id、姓名、相似日期或相鄰區段推測 ownership。
+  - 歷史日期不得因 work_date 早於 CURRENT_DATE 而單獨拒絕。單日休假 Preview 依契約必須有 original_schedule_id，因此既有日列但無付款／月結／人工工時鎖時為 unlocked 並 requires_review；locked 時 blocked。完全沒有 assignment-owned schedule 的歷史 bootstrap 由既有 OrderAssignmentSynchronization Preview／Apply 補建，不得在本單日入口放寬 original_schedule_id。
+  - historical_fact_state 必須由 Server 依 DB facts 判定；API client 不得傳入 allow_historical_edit、bootstrap、unlocked、locked 或等價 bypass。
+  - substitute 必須明確提供 substitute_staff_id，並產生全新的 provisional 單日 assignment；不得重用原 assignment、其他既有 assignment 或同日形成雙重 ownership。
+  - defer_following_assignments 必須讓原區段補足一天並依序後推後續 assignments；不得只延長訂單日期、只移動單一區段或直接呼叫會自行 commit 的舊保存入口。
+  - provisional plan 套用後最多四個有效 assignment rows；同 staff 的不連續 assignments 不得合併或以 distinct staff 數取代 row 上限。
+  - 付款、有效月結、actual_hours_adjustments 的鎖定判斷必須涵蓋原 assignment、所有被順延位移的後續 assignments 及 provisional substitute assignment ownership；legacy assignment_id=null、cross-case、other-assignment 或 unresolved ownership review 存在時必須 blocked 或 requires_review。
+  - Preview 只輸出 provisional 服務日、時數與薪資 ownership 影響，不得呼叫只核對已落庫資料的 AssignmentPayrollReconciliationService，也不得輸出已確認薪資金額。
+  - ready preview 的 provisional assignment 服務日與時數總和必須符合訂單需求；draft 計算可暫時不完整，但不得回傳 ready。
+  - preview_fingerprint 必須由 canonical server result 產生，不接受 API client 傳入，不包含不穩定 dict 順序、主機時間或人類顯示文字。
+  - Preview 結果不是持久鎖；Apply 必須在同一 transaction 與 StaffOccupancyMutex 內重新讀取及驗證所有 facts。
+  - 已取得可信 canonical snapshot 且完成確定性計算時，protected facts、availability、服務總量、assignment transition、ownership 或同步需求等不可套用情況必須保留 canonical blocked result；可人工覆核且 plan 完整時保留 requires_review。
+  - 只有 canonical Preview 無法形成時才使用 AssignmentLeaveResolutionDomainError：case／assignment／schedule 不存在為 not_found，client request／identity 不合法為 validation_error，讀取期間 canonical identity 改變為 conflict。AssignmentScheduleConflictSnapshotDomainError 只允許依 typed code 精確映射：case_not_found -> not_found/case_not_found/reason "case does not exist"/details 不變；assignment_identity_changed_during_snapshot -> conflict/同 code/reason "assignment identity changed while reading conflict snapshot"/details 不變。
+  - Preview 不使用 locked、stale_preview 或 event_key_identity_conflict exception；code 必須穩定且 machine-readable，不得解析 reason、一般 exception message 或 ValueError message。未知 AssignmentScheduleConflictSnapshotDomainError typed code、一般 ValueError、malformed facts、dependency contract violation、DB 或 infrastructure 例外必須原樣傳播。
+- Non-goals:
+  - 不建立新 Router；後續 API 只能在既有 assignment-schedules／rest-dates Router 增加強型別 action。
+  - 不建立、修改、切割或取消正式 assignment、staff_schedule、訂單、日期鎖、付款、月結或人工時數調整。
+  - 不寫 append-only 事件，不搜尋、聯繫、推薦或自動選擇代班月嫂，不處理一般區段換人或 UI。
+  - 不處理完全沒有 assignment-owned schedule 的歷史 bootstrap；該情境沿用 OrderAssignmentSynchronization Preview／Apply。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "leave_resolution_preview", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-preview"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionPreviewFromSnapshot
+- Sub Map: root
+- Type: service
+- State: `dirty`
+- Source: services/assignment_schedule_leave_resolution_preview.py::compute_assignment_leave_resolution_preview_from_snapshot
+- Dependencies: [AssignmentScheduleConflictSnapshotService, AssignmentScheduleRestDateValidationHelpers, MultiCaregiverAssignmentRules, CaregiverSegmentAvailabilityInternalHelpers]
+- Description: 以呼叫端提供的已驗證操作意圖、original assignment-owned schedule 與 canonical conflict snapshot，純計算順延／代班 preview、服務 ownership 影響與穩定 fingerprint；Public Preview 與 Apply transaction 共用此唯一演算法。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-001
+  - approved_clarification_ref:AC-clar-002
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - request: case_no、original_assignment_id、original_schedule_id、work_date、resolution_type、substitute_staff_id
+  - original_assignment_schedule: 明確 original assignment 與其 assignment-owned 日排班 facts
+  - conflict_snapshot: AssignmentScheduleConflictSnapshotService 或其 caller-owned cursor helper 產生的完整 canonical mapping；top-level keys 精確為 database_current_date、assignments、assignment_schedule_days、active_lock_days、historical_facts，historical_facts keys 精確為 leave_substitution_events、actual_hours_adjustments、non_cancelled_payments、active_settlements
+- Output:
+  - preview: 與 public Preview 完全相同的 ready／blocked／requires_review、provisional plan、conflicts、service impacts、blocking reasons、requires_confirmation 與 SHA-256 fingerprint
+- Algorithm:
+  - 在任何 historical state、transition、availability、service impact、status 或 fingerprint 分類前，先完整驗證 conflict_snapshot 的 top-level、historical_facts 及所有 collection rows；不得只驗證 request 選中的 assignment、schedule、staff 或日期。
+  - 復用既有 validation helpers 驗證操作意圖與 original schedule exact ownership，不讀 DB 或 clock。
+  - 由 snapshot facts 判定 unlocked／locked；單日入口必須具有 exact original assignment-owned schedule，完全無 schedule 的歷史 bootstrap 不進入本 helper。
+  - defer 時建立原區段補足一天且後續 assignments 等量後移的 provisional plan；原休假日不計、補班日只計一次。
+  - substitute 時建立獨立單日 substitute provisional assignment，保留 prefix／substitute／suffix ownership。
+  - 復用 MultiCaregiverAssignmentRules 與 availability pure helpers 驗證最多四段、完整覆蓋、衝突與服務總量。
+  - 只捕捉 MultiCaregiverAssignmentRules 的 AssignmentPlanTransitionConflict；以其 stable code 與 JSON-safe deep-copied details 產生 category=`assignment_transition` 的 canonical blocked diagnostic，納入既有 deterministic sort 與 fingerprint；不得捕捉或解析一般 ValueError。
+  - 以 canonical server result 穩定序列化產生 fingerprint；不包含主機時間、顯示文字或不穩定 dict 順序。
+- Invariants:
+  - 規格出處：`多月嫂排班UX改善討論紀錄.md`「兩個分頁共用 assignment-aware 預覽、衝突檢查與套用服務」「預覽仍須在後端完成檔期、區段、日排班、服務總量及鎖定檢查」；滿足 Preview／Apply 同一計算結果。
+  - 架構出處：已核准 AssignmentScheduleConflictSnapshotInternalHelpers 的 caller-owned snapshot 契約，以及 2026-07-28 人工核准的同 transaction fingerprint 重算。
+  - deterministic pure；不得 import DbService/get_connection，不得建立 cursor、執行 SQL、讀 clock/env/filesystem、取得 mutex或管理 transaction。
+  - 不得修改任何輸入 mapping/list；相同輸入必須產生完全相同輸出與 fingerprint。
+  - conflict_snapshot 必須是 mapping 且不得缺少或多出任何 top-level key；historical_facts 必須是 mapping 且不得缺少或多出任何核准 collection。assignments、assignment_schedule_days、active_lock_days 與四個 historical collections 必須各自為 list，row 必須為 mapping；missing／extra key、wrong type、non-mapping row、duplicate canonical identity 或 ownership mismatch 一律原樣 ValueError，不得補預設值、去重或忽略。
+  - database_current_date 必須是 producer canonical date。assignments row keys 精確為 id、case_no、staff_id、status、assigned_start_date、assigned_end_date、planned_hours、actual_hours；assignment_schedule_days row keys 精確為 id、case_no、staff_id、assignment_id、work_date、is_work_day、is_double_pay、notes、requires_review；active_lock_days row keys 精確為 id、lock_id、plan_id、case_no、segment_id、staff_id、lock_date。
+  - leave_substitution_events row keys 精確為 id、case_no、original_assignment_id、original_schedule_id、work_date、resolution_type、substitute_assignment_id、event_key、occurred_at；actual_hours_adjustments row keys 精確為 id、case_no、assignment_id、original_hours、adjusted_hours、reason、adjusted_at；non_cancelled_payments row keys 精確為 id、case_no、assignment_id、payment_status；active_settlements row keys 精確為 id、case_no、assignment_id、settlement_id、status。
+  - 所有 id 欄位依 producer 契約使用 strict positive int 且 bool 非 int；nullable assignment_id／substitute_assignment_id 僅在 producer 明確允許時可為 null。日期、bool、string、nullable 值與 Decimal-compatible hours/status/resolution/event fields 必須保留 producer canonical 型別與值域；不得 trim、coerce、從別名取值或把 missing 當 null/false/空字串/空 list。每個 case-owned row 的 case_no 必須等於 request canonical case_no；assignment-owned rows 必須引用同 snapshot 的 assignment，schedule requires_review 必須與 assignment_id 是否為 null 一致；duplicate id、assignment/date ownership、event original schedule lineage、payment/settlement/adjustment assignment reference 不合法均 ValueError。
+  - snapshot 全量驗證必須涵蓋未被本次 request 選中的 rows；任何 malformed decoy 都必須在呼叫 MultiCaregiverAssignmentRules、availability helper 或產生 blocked/requires_review/ready 前失敗。
+  - 不接受 client historical_fact_state、allow_historical_edit、provisional plan、conflicts、hours、double-pay、payment 或 settlement facts。
+  - historical unlocked 可 requires_review、locked 必須 blocked；日期早於 CURRENT_DATE 本身不得單獨阻擋。
+  - 規格出處：既有核准單日 Preview 契約要求 exact original_schedule_id；完全無 assignment-owned schedule 的歷史 bootstrap 只能使用 OrderAssignmentSynchronization Preview／Apply，本 helper 不得模擬轉介結果或放寬輸入。
+  - Public Preview 與 Apply preflight 必須呼叫此函式；不得複製其 assignment transition、availability、service impact 或 fingerprint 演算法。
+  - 只要 canonical snapshot 完整且可完成確定性計算，protected facts、availability conflict、order_service_hours_mismatch、transition conflict 與同步需求都必須回 canonical blocked；AssignmentPlanTransitionConflict 的 diagnostic category 精確為 `assignment_transition`、code 精確保留 dependency stable code、details 必須先驗證為 JSON-safe 後 deep-copy，且以既有 canonical identity deterministic sort；reviewable 狀況回 requires_review。
+  - AssignmentPlanTransitionConflict details 若非 mapping、非 JSON-safe、含 non-string mapping key、循環參照或其他 malformed value，必須原樣失敗；不得修補、字串化或建立 blocked output。
+  - malformed Server snapshot、dependency contract violation、一般 ValueError、非 AssignmentPlanTransitionConflict 例外、DB/infrastructure error 或 pure helper 不可能狀態必須原樣失敗，不得降級成 blocked 或 validation error；不得以 exception message、ValueError message 或文字片段分類。
+  - 驗收必須逐案覆蓋：exact snapshot/historical key sets；每個 collection 非 list、row 非 mapping、missing/extra/wrong value、duplicate identity 與 ownership/lineage mismatch；未選中 malformed decoy 的全量先驗證；合法 snapshot 的輸入不變與 deterministic preview/fingerprint；AssignmentPlanTransitionConflict category=`assignment_transition`、stable code、details deep-copy、diagnostic sort/fingerprint；一般 ValueError、malformed conflict details、dependency 與 DB/infrastructure error 原樣傳播；且既有 ready／blocked／requires_review、defer／substitute、historical unlocked／locked、availability、service-hours 與 fingerprint 行為不變。
+- Non Goals:
+  - 不查 DB、不鎖資料、不寫 assignment/schedule/event/payment、不管理 connection 或 transaction。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "leave_resolution_preview_from_snapshot", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-preview-from-snapshot"], "cwd": "project", "timeout": 75, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchRequestCanonicalization
+- Sub Map: root
+- Type: internal_helper
+- State: `planned`
+- Source: services/assignment_schedule_leave_resolution_preview.py::canonicalize_assignment_leave_resolution_batch_request
+- Dependencies: [AssignmentScheduleRestDateValidationHelpers, AssignmentScheduleConflictSnapshotInternalHelpers]
+- Description: 嚴格驗證同一正式 assignment 的多日期休假 request 與原始 schedule ownership，拒絕重複日期／schedule，產生穩定排序、連續 ordinal 與只含原始事實的 lineage；不計算 transition、衝突、時數或 fingerprint。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - request: contract_version=`assignment-leave-substitution-batch-preview/v1`、trim 後非空 case_no、strict positive original_assignment_id，以及同一 assignment 的非空 items list
+  - original_assignment_schedule: 明確 original assignment 與其全部 assignment-owned 日排班 facts
+  - conflict_snapshot: 同案 canonical snapshot，僅供核對 case／assignment／staff／schedule ownership 與穩定原始 facts
+- Output:
+  - canonical_batch_intent: contract_version、canonical case_no、original_assignment_id，以及依 work_date／original_schedule_id 排序並含 Server 派生 batch_item_index 的 canonical items
+  - item_lineage: 每個 ordinal 對應的 original_assignment_id、original_schedule_id、original_staff_id 與 original work_date
+- Algorithm:
+  - 驗證 request 與 item 均為 strict mapping 且只含核准欄位；items 必須為 list 且至少一項，bool 不得視為 int，日期不得 trim 或接受非 exact ISO 格式。
+  - 驗證每項 resolution_type／substitute_staff_id 組合，以及 schedule 精確屬於同一 case_no、original_assignment_id、original staff 與 work_date。
+  - 拒絕重複 original_schedule_id 或重複 work_date，不去重、不接受 client ordinal、event key或執行順序。
+  - 以 `(work_date ASC, original_schedule_id ASC)` 排序，派生連續 `batch_item_index=0..N-1` 並建立只含原始 ownership 的 lineage。
+- Invariants:
+  - change_class=implements_existing_goal；只拆分已核准 AC-clar-008 request canonicalization，不改變 batch 行為或責任邊界。
+  - 一批只允許一個 original_assignment_id；後續 assignment 可受 defer 影響，但不得成為同批第二個操作目標。
+  - 不得接受 client batch_key、actor、reason、preview_fingerprint、event_key、batch_item_index、provisional plan、historical_fact_state 或其他 Server-derived facts。
+  - 相同語意不得因 item 順序、dict insertion order 或 DB row 順序改變 canonical intent、ordinal 或 lineage。
+  - deterministic pure；不得讀 DB／clock／env／filesystem、取得 mutex、管理 transaction、計算 transition／availability／hours／status／fingerprint，或修改輸入。
+  - malformed Server snapshot 與 dependency contract violation 必須原樣傳播；Public orchestration 才將 client request failure 映射為 typed validation_error。
+- Non Goals:
+  - 不建立 provisional assignment／schedule，不計算衝突、服務量、status 或 fingerprint，不寫任何資料。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_request_canonicalization", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-request-canonicalization"], "cwd": "project", "timeout": 75, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchTransitionCalculation
+- Sub Map: root
+- Type: internal_helper
+- State: `planned`
+- Source: services/assignment_schedule_leave_resolution_preview.py::calculate_assignment_leave_resolution_batch_transition
+- Dependencies: [AssignmentScheduleLeaveSubstitutionBatchRequestCanonicalization, AssignmentScheduleLeaveSubstitutionDomainTransitionRulesAdapter, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 對 canonical leave intent 與同一份 pure before service plan 一次建立 absolute before→after ServicePlanTransition，再以正常資料輸出 business conflicts；不接受 raw request、不產生 persistence actions、public status、exception 或 fingerprint。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - function_signature: `calculate_assignment_leave_resolution_batch_transition(*, canonical_intent, item_lineage, before_service_plan, eligibility_facts)`；四個參數全部 keyword-only，不接受 original_assignment_schedule、conflict_snapshot 或其他 legacy／額外參數。
+  - canonical_intent: exact mapping keys=`case_ref,original_segment_ref,items`。original_segment_ref 必須為 current:N；items 為非空 list，依 service_day 升冪且 item_ref=item:N 連續 0..N-1。每項 exact keys=`item_ref,service_day,resolution,substitute_caregiver_ref`；resolution 只允許 defer／substitute，defer 的 substitute_caregiver_ref 必須為 null，substitute 必須為合法 typed caregiver ref。
+  - item_lineage: list；每項 exact keys=`item_ref,original_service_day_ref`，original_service_day_ref 必須為 `service-day:YYYY-MM-DD`，並與 canonical_intent.items 依 item_ref／service_day 一一對應，不得 missing、extra 或 duplicate。
+  - before_service_plan: exact mapping keys=`segments,daily_ownership,service_period,service_commitment`。segments 為 ordered list，每項 exact keys=`segment_ref,caregiver_ref,status,service_period,segment_kind,lineage` 且 before 只允許 current:N；segment service_period exact keys=`start,end`，lineage exact keys=`original_segment_ref,substitution_service_day`。daily_ownership 為依 service_day 升冪的 list，每項 exact keys=`service_day,segment_ref,caregiver_ref` 且每個服務日恰一 owner。plan service_period exact keys=`start,end`；service_commitment exact keys=`required_service_days,hours_per_service_day,required_total_hours`，required_total_hours 必須精確等於前兩者乘積。
+  - eligibility_facts: exact mapping keys=`database_current_date,historical_protection,occupancy`。historical_protection exact keys=`state,protected_segment_refs`，state 只允許 bootstrap／unlocked／locked，refs 為 canonical unique current:N list；bootstrap 時必須空、locked 時不得空。occupancy 為 canonical ordered list，每項 exact keys=`caregiver_ref,service_day,source_kind,source_segment_ref`；source_kind 只允許 formal_service／waiting_deposit_lock／legacy_unresolved，同案 before ownership 才可提供 current:N source_segment_ref，其餘必須 null。不得包含 schedule／assignment／lock／payment／settlement DB identity。
+- Output:
+  - transition_result: exact mapping keys=`canonical_intent,service_plan_transition,canonical_eligibility`；canonical_eligibility 的 blocking／review diagnostics 是正常 business-conflict data，不是 exception。
+  - service_plan_transition: exact keys=`before,intent,after,impacts`。before／intent 為 canonical defensive copies；invalid transition 時 after=null 且 impacts=null；valid 時 after 使用與 before 相同 plan exact shape但 refs 可為 current:N／derived:N／substitute:N，impacts exact keys=`per_caregiver,total`。
+  - per_caregiver_impact: 每項 exact keys=`caregiver_ref,before_service_days,after_service_days,delta_service_days,before_service_hours,after_service_hours,delta_service_hours`，依 typed caregiver ref canonical 升冪。
+  - total_impact: exact keys=`before_service_days,after_service_days,delta_service_days,before_service_hours,after_service_hours,delta_service_hours,required_service_days,required_total_hours`；所有 delta 精確為 after-before，per-caregiver 合計必須等於 total。
+  - canonical_eligibility: exact keys=`transition_valid,applicable,blocking_diagnostics,review_diagnostics`。invalid 時 false／false；valid 且 blocking 時 true／false；valid 且只有 review 或無 diagnostic 時 true／true。
+  - diagnostic: 每項 exact keys=`code,scope_ref,facts`。scope_ref 只允許 case／transition／current:N／derived:N／substitute:N／item:N／service-day:YYYY-MM-DD。blocking code allowlist=`batch_leave_target_mismatch,batch_substitute_lineage_invalid,batch_substitute_date_duplicate,batch_original_staff_ownership_changed,batch_defer_shift_invalid,assignment_row_limit_exceeded,assignment_daily_ownership_invalid,historical_ownership_locked,formal_service_conflict,waiting_deposit_lock_conflict,service_commitment_mismatch`；review code allowlist=`historical_change_requires_review,legacy_ownership_requires_review`。
+  - diagnostic_facts: 只能使用 keys=`field,reason,expected,actual,service_day,segment_ref,segment_refs,original_segment_ref,caregiver_ref,source_kind,expected_defer_days,actual_defer_days,maximum_active_segments,actual_active_segments,expected_service_days,actual_service_days,expected_service_hours,actual_service_hours,database_current_date,effective_date` 及 JSON-safe canonical values；不得含 display text、DB identity 或 temporary adapter identity。diagnostics 依 code、scope_ref、sorted-key compact JSON facts 升冪。
+- Algorithm:
+  - 嚴格驗證四個 keyword-only inputs、所有 exact key sets、typed refs、日期、Decimal-compatible finite hours及 intent／lineage 一一對應；任何 missing／extra／duplicate／coercion 需求皆 ValueError。
+  - 從同一 before_service_plan 聚合全部 canonical leave intent；所有日期持續以 original service-day lineage 解讀，不逐 item fold 或改寫 provisional state。retained segments 使用 current:N；原 caregiver 切出的 formal fragments 依 service period canonical order使用 derived:N；每個 substitute item 使用與 item ordinal 相同 N 的 substitute:N。
+  - defer item 總數 D 只延長整體服務鏈一次且精確等於 canonical defer item 數；substitute 不增加 D。
+  - 建立完整 candidate after_service_plan 與 canonical daily ownership；每個服務日必須恰有一個 segment_ref／caregiver_ref。
+  - 先建立 absolute after candidate，再呼叫 AssignmentScheduleLeaveSubstitutionDomainTransitionRulesAdapter 驗證；well-formed request 的規則、ownership、availability、歷史保護或service commitment衝突一律回 stable diagnostics，不得拋exception。只有 malformed input、dependency contract violation或技術不可能狀態使用 typed application／data-integrity exception。
+  - transition valid 時保留完整 candidate after。只檢查 after 相對 before 新取得的 caregiver／service_day ownership：相同 current:N retained ownership排除；其他 formal_service 或 waiting_deposit_lock形成blocking；legacy_unresolved形成review。同 caregiver 的不連續 prefix／suffix 不得因重複 caregiver 而拒絕。
+  - historical state=locked 且 protected segment受影響時形成 historical_ownership_locked；unlocked 且受影響時形成 historical_change_requires_review。
+  - valid-but-ineligible 必須保留 after candidate，供 UI 同時顯示「會如何調整」與阻擋原因；只需人工確認時 applicable=true且 review diagnostics非空。
+  - 計算 pure per-caregiver service-day／hour impacts與total service commitment impact；after total 不等於 service commitment 時保留 valid candidate 並形成 service_commitment_mismatch blocking。stable-sort impacts及diagnostics後 defensive-copy回傳，不得產生 schedule／assignment actions。
+- Invariants:
+  - change_class=implements_existing_goal；本節點是 Batch before→after pure domain transition 的唯一 owner，不新增跨 assignment batch、部分成功或薪資規則。
+  - 不得接受 raw API request、自行改變 canonical ordinal或產生第二套 request identity。
+  - 不得輸出 assignment_transition_plan、schedule_change_plan、DB／generated IDs、mutation actions、batch／event key、actor、reason或audit payload。
+  - daily ownership 是 before／after service plan 的一級 canonical state，不得從 persistence rows 或日期區間事後推測。
+  - D 必須精確等於 defer item 數；每個 substitute item 恰有一個 substitute:N；substitute 同日不得讓原與代班 caregiver雙重 ownership。
+  - well-formed business decision 必須保留完整 absolute before、intent及after candidate與canonical diagnostics；不得用exception表示 blocked／requires_review。只有無法形成well-formed absolute candidate的malformed／integrity failure可無after並拋typed exception。
+  - diagnostics只含stable code、scope_ref與canonical business facts，不含display文字或temporary adapter identity。
+  - BatchPreviewFromSnapshot 擁有 legacy Snapshot-to-domain adaptation；本節點不得接受、解析或保留 original_assignment_schedule／conflict_snapshot row shape，也不得直接呼叫 allocation-search shaped CaregiverSegmentAvailabilityInternalHelpers。
+  - occupancy eligibility 只依 pure eligibility_facts 判斷；same-caregiver prefix／suffix合法，retained self-occupancy不得誤判，cross-case formal occupancy與active waiting-deposit lock必須blocking，legacy unresolved只能review。
+  - impacts 的 per-caregiver day／hour合計必須精確等於total；required_total_hours必須為finite Decimal-compatible值且bool非法。
+  - 驗收必須覆蓋 keyword-only 與 legacy positional caller拒絕、每層missing／extra keys、intent／lineage drift、pure substitute／defer／mixed、D=1/2/3、same-caregiver prefix／suffix、Adapter invalid after/impacts=null、valid formal／lock conflict保留after、legacy unresolved review、historical locked、retained self-occupancy、cross-case occupancy、per-caregiver／total守恆、service commitment mismatch、typed caregiver refs、stable ordering、input immutability及output無DB／generated identity／actions／audit fields。
+  - malformed domain input使用typed application contract exception；dependency contract violation與pure helper不可能狀態使用typed data-integrity exception，均不得降級為blocked或混入business diagnostics。
+  - deterministic pure；不得讀 DB／clock／env／filesystem、取得 mutex、管理 transaction、產生 fingerprint或修改輸入。
+- Non Goals:
+  - 不驗證 raw client schema，不決定 duplicate policy，不聚合 public status／confirmation，不寫 assignment／schedule／event／payment；不把 raw batch items 或 item-count 一致性責任下放給 MultiCaregiverAssignmentRules。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_pure_domain_transition", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-pure-transition"], "cwd": "project", "timeout": 90, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchPreviewFromSnapshot
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_leave_resolution_preview.py::compute_assignment_leave_resolution_batch_preview_from_snapshot
+- Dependencies: [AssignmentScheduleLeaveSubstitutionBatchRequestCanonicalization, AssignmentScheduleLeaveSubstitutionBatchTransitionCalculation, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 編排 batch request canonicalization、Snapshot-to-domain adaptation 與 pure absolute before→after transition，將 business conflicts 投影為正常 Preview data；fingerprint只簽署canonical intent、pure transition及canonical eligibility。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - request: contract_version=`assignment-leave-substitution-batch-preview/v1`、trim 後非空 case_no、strict positive original_assignment_id，以及同一 assignment 的非空 items list
+  - original_assignment_schedule: 明確 original assignment 與其全部 assignment-owned 日排班 facts
+  - conflict_snapshot: AssignmentScheduleConflictSnapshotInternalHelpers 產生的一次完整同案 canonical facts
+- Output:
+  - batch_preview: contract_version、canonical_intent、pure service_plan_transition（before／intent／after-or-null／impacts）、canonical_eligibility（transition_valid／applicable／blocking／review diagnostics）、status、requires_confirmation與單一 lowercase SHA-256 preview_fingerprint。
+- Algorithm:
+  - 委派 BatchRequestCanonicalization 後，將 legacy canonical case／original assignment／item identities只在本節點投影為 pure `case_ref`、`current:N`、`item:N`與`service-day:YYYY-MM-DD`；不得把 DB id 傳入pure Transition。
+  - 完整驗證 original assignment schedule與conflict snapshot後，依案件segments canonical service-period順序配置current:N，建立exact before_service_plan：ordered segments、逐日唯一ownership、案件service_period及service_commitment。
+  - 將historical payment／settlement／manual-hours guards只投影為historical_protection state與protected current:N refs；將正式服務、active waiting-deposit locks及legacy unresolved occupancy投影為exact pure occupancy facts，不保留來源DB identity。
+  - 以 keyword-only `calculate_assignment_leave_resolution_batch_transition(canonical_intent=..., item_lineage=..., before_service_plan=..., eligibility_facts=...)` 委派唯一 pure transition；不得傳入 original_assignment_schedule／conflict_snapshot positional legacy objects。
+  - 委派 BatchTransitionCalculation 取得唯一 pure transition result；不得保留第二套 validation、ordering、ownership、eligibility或transition演算法。
+  - transition invalid或blocking diagnostics非空時 status=blocked；否則review diagnostics非空時requires_review；其餘ready。requires_confirmation精確為status != blocked。
+  - well-formed blocked／requires_review結果必須保留absolute after candidate，讓UI同時顯示預計調整與business conflicts；malformed／integrity／infrastructure failure不得偽裝成Preview status。
+  - fingerprint payload精確只有canonical_intent、service_plan_transition及canonical_eligibility；以UTF-8、sorted keys、compact JSON、ISO date與canonical Decimal string計算lowercase SHA-256。
+- Invariants:
+  - change_class=implements_existing_goal；Preview只是pure transition與eligibility的public projection，不新增其他責任。
+  - deterministic pure；不得讀 DB／clock／env／filesystem、取得 mutex、管理 transaction或修改輸入。
+  - 不得重新計算、改寫或以public display shape取代dependency產生的pure transition、daily ownership或eligibility。
+  - Snapshot-to-domain projection必須 deterministic、input-order independent且完整驗證未選取rows；same semantic snapshot必須產生相同opaque refs、before plan與eligibility facts。
+  - 本節點是legacy Snapshot、approved request canonicalizer與pure Transition之間唯一adapter；Router、BatchTransition及Apply mutation不得各自建立第二套projection。
+  - fingerprint精確簽署canonical intent、pure transition與canonical eligibility；不得包含status、requires_confirmation、display projection、DB／generated identity、batch／event key、actor、reason、audit metadata或逐項fingerprint。
+  - 相同三份canonical payload必須得到相同fingerprint；status／display變化不得改變fingerprint。
+  - valid-but-ineligible candidate after不可被刪除；Router不得自行從segments或persistence rows重建after方案。
+  - helper malformed input使用typed application exception，malformed Server snapshot／dependency contract violation使用typed data-integrity exception，DB／driver failure使用typed infrastructure exception；不得轉成blocked／requires_review。
+  - Preview不產生或驗證batch_key，不寫batch header／逐日event。
+- Non Goals:
+  - 不讀 DB、不建立 transaction、不修改 assignment／schedule／hours／payment／settlement、不配置樓層費、不寫 batch header或逐日 event。
+  - 不搜尋或自動選擇代班月嫂；不新增 Router、API schema或UI；不修改既有單日 Preview／Apply契約。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_preview_from_pure_transition", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-preview-pure-transition"], "cwd": "project", "timeout": 90, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchPreviewOrchestration
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::preview_assignment_leave_resolution_batch
+- Dependencies: [AssignmentScheduleConflictSnapshotService, AssignmentScheduleLeaveSubstitutionBatchPreviewFromSnapshot]
+- Description: 為 public 多日期休假 Preview 取得一次唯讀 canonical snapshot，並只委派 BatchPreviewFromSnapshot 產生單一 aggregate Preview 與 fingerprint；不建立 transaction、鎖資料或保留第二套 batch 計算。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - request: contract_version=`assignment-leave-substitution-batch-preview/v1`、trim 後非空 case_no、strict positive original_assignment_id，以及同一 assignment 的非空 items list
+- Output:
+  - batch_preview: BatchPreviewFromSnapshot 產生的唯一 ready、blocked 或 requires_review aggregate result 與單一 preview_fingerprint
+  - expected_failure: AssignmentLeaveResolutionDomainError(category, code, reason, details)；除既有 request validation 外，只允許 `not_found/case_not_found`、`not_found/original_assignment_not_found` 與 `conflict/assignment_identity_changed_during_snapshot`。
+- Algorithm:
+  - 嚴格驗證 public request envelope，從 items 蒐集 provisional substitute staff ids 與日期範圍，但不排序、去重或產生 canonical ordinal。
+  - 使用 AssignmentScheduleConflictSnapshotService 一次讀取同案完整 canonical facts；只捕捉 AssignmentScheduleConflictSnapshotDomainError，將 `case_not_found` 映射為 `not_found/case_not_found`、reason=`case does not exist`，將 `assignment_identity_changed_during_snapshot` 映射為同 code 的 `conflict`、reason=`assignment identity changed while reading conflict snapshot`，兩者 details 原樣保留。
+  - Snapshot 成功後以 strict positive original_assignment_id 精確查找同 case assignment；case 存在但 requested original_assignment_id 不在完整 snapshot 時回 `not_found/original_assignment_not_found`、reason=`original assignment does not exist`、details=`{"case_no": <canonical str>, "original_assignment_id": <positive int>}`，不得視為 snapshot identity drift，也不得改以 orders.staff_id、staff_id 或 schedule 推測。
+  - 將原始 request、original assignment schedule 與同一次 snapshot 原樣傳給 BatchPreviewFromSnapshot，直接回傳其 aggregate result。
+- Invariants:
+  - change_class=implements_existing_goal；只提供 AC-clar-008 public batch Preview 的 DB-free Router 委派邊界，不新增業務規則。
+  - Preview 完全唯讀；不得使用 FOR UPDATE、取得 mutex、commit、rollback、INSERT、UPDATE、DELETE 或 REPLACE。
+  - 不得逐項呼叫單日 Preview orchestration、合併多個單日 fingerprint，或在此節點重算 canonical items、transition、availability、hours、status 或 fingerprint。
+  - original assignment、schedule ownership 與 substitute staff 範圍只能由同一次 canonical snapshot 解讀；不得依 orders.staff_id、姓名或 client provisional facts 推測。
+  - canonical blocked／requires_review result 必須原樣保留；malformed Server facts、dependency contract violation、DB 或 infrastructure 例外必須原樣傳播。
+  - Snapshot typed error 的 category 只允許 not_found／conflict，code 只允許 case_not_found／assignment_identity_changed_during_snapshot；任何未知 category、code 或不符合契約的 details 都是 dependency contract violation，必須原樣 fail closed，不得降級為 4xx。
+  - `case_not_found` details 必須精確為 `{"case_no": str}`；`assignment_identity_changed_during_snapshot` details 必須精確保留 canonical case_no 與 before／after identity lists，不得增加、刪除或改名欄位。
+  - 既有單日 Preview orchestration 與 public API 契約不得修改或轉接至 batch。
+  - 測試必須精確覆蓋兩個 Snapshot typed mapping 的 category／code／reason／details、case 存在但 original assignment 缺少的 `original_assignment_not_found`、未知 typed category／code／malformed details 原樣 fail closed，以及一般 ValueError、DB／infrastructure 與 BatchPreviewFromSnapshot 例外原樣傳播。
+- Non Goals:
+  - 不管理 batch_key、actor、reason、transaction、mutation、batch header、逐日 event、付款或月結。
+  - 不修改既有單日 Preview 的錯誤映射、reason、details 或例外傳播行為。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_preview_orchestration", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-preview-orchestration"], "cwd": "project", "timeout": 90, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchApplyRequestEnvelopeCanonicalization
+- Sub Map: root
+- Type: internal_helper
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::canonicalize_assignment_leave_resolution_batch_apply_envelope
+- Dependencies: [AssignmentScheduleRestDateValidationHelpers, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 在任何 cursor 操作前純驗證 Batch Apply envelope，建立與 Preview 相同的 syntactic canonical intent及coarse replay identity seed；不驗證schedule ownership或產生domain transition。
+- Complexity: low
+- Input:
+  - request: exact mapping keys=`contract_version,case_no,original_assignment_id,items,preview_fingerprint,batch_key,actor,reason`；contract_version 必須精確為 `assignment-leave-substitution-batch-apply/v1`，不得 missing／extra keys
+  - request_item: exact mapping keys=`original_schedule_id,work_date,resolution_type,substitute_staff_id`；work_date 必須為未 trim 的 exact `YYYY-MM-DD`，resolution_type 只允許 `defer_following_assignments|substitute`，defer 的 substitute_staff_id 必須為 null，substitute 必須為 strict positive int
+- Output:
+  - apply_envelope: exact mapping keys=`preview_request,requested_preview_fingerprint,batch_key,actor,reason,replay_identity_seed`
+  - preview_request: exact mapping keys=`contract_version,case_no,original_assignment_id,items`；contract_version 固定轉為 `assignment-leave-substitution-batch-preview/v1`，items 為依 `(work_date ASC, original_schedule_id ASC)` 排序的 canonical defensive copies
+  - canonical_preview_item: exact mapping keys=`original_schedule_id,work_date,resolution_type,substitute_staff_id`；日期維持 exact `YYYY-MM-DD` 字串且不得包含 client ordinal、event_key 或 apply metadata
+  - replay_identity_seed: exact mapping keys=`batch_key,request_snapshot,preview_fingerprint`；request_snapshot 為 preview_request 的 canonical defensive copy，preview_fingerprint 精確等於 requested_preview_fingerprint。actor／reason是audit metadata，item_count是execution integrity fact，均不屬transport retry identity
+- Algorithm:
+  - 嚴格驗證apply contract version、trim後非空case_no／batch_key／actor／reason、strict positive original_assignment_id、64字元lowercase hexadecimal fingerprint及非空items exact fields。
+  - items只做syntactic validation，以(work_date, original_schedule_id)升冪、拒絕duplicate date／schedule，剝除apply-only metadata後建立Preview request；schedule ownership留給locked Preview。
+  - 以 canonical values 建立 replay_identity_seed，只逐值保留batch_key、canonical preview request snapshot與requested fingerprint；不雜湊、不加入clock、actor／reason、item_count、DB facts或Server-generated child identity。
+- Invariants:
+  - deterministic pure、input immutable；不得讀DB／clock／env或接受client ordinal、event_key、transition、eligibility、provisional plan。
+  - case_no、batch_key、actor、reason只允許 trim 後的 canonical非空字串；輸出使用 trim 後值。original_assignment_id、original_schedule_id、substitute_staff_id不得接受bool；items不得去重，duplicate work_date或original_schedule_id整批失敗。
+  - batch_key納入seed以固定被查詢的aggregate identity及後續derived child event-key namespace，但相同batch_key本身不得視為identity相等。
+  - exact retry identity精確為同一batch_key下的canonical request_snapshot與requested preview fingerprint；case、original assignment及items只透過request_snapshot參與。actor／reason、item_count、children、generated ids、payload及occurred_at不得參與identity。
+  - replay_identity_seed是完整transport retry identity，但不是新決定的business成功authority；既有batch可直接據此判定retry，新batch仍必須以locked DB fresh Preview／confirmation建立apply authorization。seed不得擴充children或execution payload後才比較。
+  - apply_envelope、preview_request、canonical item、request_snapshot與replay_identity_seed均必須拒絕額外keys並以defensive copy輸出；request_snapshot與preview_request值相等但不得共享可由caller變更的巢狀物件。
+  - 驗收須精確覆蓋每層missing／extra keys、apply→preview contract version mapping、bool ids、bad dates、resolution/substitute組合、duplicate date／schedule、bad fingerprint、empty metadata、stable ordering、actor／reason不影響seed、seed三欄逐值相等、輸入／輸出巢狀immutability及零cursor call。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_apply_envelope", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-apply-envelope"], "cwd": "project", "timeout": 75, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchReplaySnapshotRead
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::read_assignment_leave_resolution_batch_replay_snapshot
+- Dependencies: [AssignmentScheduleLeaveSubstitutionBatchSchema, AssignmentScheduleLeaveSubstitutionEventSchema, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 使用caller-owned cursor依batch_key讀取append-only header與完整ordinal execution results；header供transport retry identity，children只供replay response與audit integrity，不參與identity。
+- Complexity: medium
+- Input:
+  - cursor: caller-owned DictCursor
+  - batch_key: trim 後非空且已 canonicalized 的字串；不得在本節點重新選擇、截斷或由其他欄位推測
+  - lock_rows: strict bool；只接受 builtin false／true，不得接受0／1或truthy值。false為一致性 precheck；true只鎖已存在header及其已存在children
+- Output:
+  - replay_snapshot: exact mapping keys=`state,header,children`；absent 精確為 `{"state":"absent","header":null,"children":[]}`，present 時 state=`present`、header為canonical header且children為依batch_item_index升冪的非空list
+  - header: exact mapping keys=`batch_key,contract_version,case_no,original_assignment_id,request_snapshot,preview_fingerprint,item_count,actor,reason`；contract_version與original_assignment_id從已驗證request_snapshot取出，其餘值來自同一batch header row
+  - header_request_snapshot: exact mapping keys=`contract_version,case_no,original_assignment_id,items`；contract_version必須為 `assignment-leave-substitution-batch-preview/v1`，case_no必須等於header case_no，original_assignment_id為strict positive int，items保持已持久化canonical順序且每項exact keys=`original_schedule_id,work_date,resolution_type,substitute_staff_id`
+  - child: exact mapping keys=`batch_key,batch_item_index,case_no,original_assignment_id,original_schedule_id,work_date,resolution_type,substitute_assignment_id,event_key,actor,reason,schedule_snapshot,payroll_snapshot`
+  - canonical_json_object: request_snapshot、schedule_snapshot、payroll_snapshot解碼後必須為mapping；遞迴輸出為defensive copy，object keys依Unicode code-point升冪、array順序不變、null／bool／string／int保型，finite非整數number使用無指數且無多餘尾零的canonical decimal string
+- Algorithm:
+  - 以參數化SQL明列header identity columns=`batch_key,case_no,preview_fingerprint,item_count,actor,reason,request_snapshot`並以batch_key等值查詢；不得SELECT `occurred_at`或使用SELECT *。lock_rows=false不得加locking clause；true在header SELECT尾端加FOR UPDATE。
+  - header absent立即回exact absent，且不得查children、不得嘗試gap／predicate／advisory lock，也不得將不存在key宣稱為已鎖定。
+  - header present時以第二個參數化SQL明列child identity columns=`batch_key,batch_item_index,case_no,original_assignment_id,original_schedule_id,work_date,resolution_type,substitute_assignment_id,event_key,actor,reason,schedule_snapshot,payroll_snapshot`，以batch_key等值查詢並 `ORDER BY batch_item_index ASC`；不得SELECT `id`或`occurred_at`。lock_rows=true在child SELECT尾端加FOR UPDATE，false不得加locking clause。
+  - 驗證header欄位、request_snapshot及每個child exact shape／type；解碼三個JSON object，canonicalize JSON scalars，將DB DATE或exact ISO字串正規化為`YYYY-MM-DD`，拒絕datetime、非finite number、bytes及driver-specific未核准型別。
+  - 驗證item_count為strict positive int且精確等於children數；children的batch_key必須逐筆等於requested/header batch_key，batch_item_index必須為strict non-negative int、無duplicate且精確連續0..item_count-1；最後依ordinal建立defensive-copy snapshot。
+- Invariants:
+  - included header DB columns只有batch_key、case_no、preview_fingerprint、item_count、actor、reason、request_snapshot；occurred_at是稽核/display metadata，不得進入replay authority。contract_version與original_assignment_id只能由canonical request_snapshot顯式取出並交叉驗證，不得從live assignment推測。
+  - included child DB columns只有batch linkage、case／assignment／schedule／date／resolution lineage、derived event_key、actor、reason及兩個immutable payload objects；auto-increment id與occurred_at不得輸出、比較或影響ordering。
+  - work_date只允許DB date或exact `YYYY-MM-DD`字串並輸出exact ISO字串；所有identity ids與ordinal必須為strict int且bool非法。不得將日期、Decimal、bool或null字串化為display text；只有JSON非整數number依canonical decimal規則輸出字串。
+  - request_snapshot必須與ApplyEnvelopeCanonicalization的canonical preview_request exact shape一致；不得接受apply-only batch_key、actor、reason、preview_fingerprint、ordinal、event_key、transition、eligibility或display fields藏入snapshot。
+  - schedule_snapshot與payroll_snapshot只驗證及canonicalize持久化immutable execution-result JSON object，不從live business rows補值、不解讀為current authority，亦不得交ReplayIdentityDecision作request equality。
+  - false／true在相同DB snapshot的canonical output必須完全相等，唯一差異是兩個SELECT是否含FOR UPDATE；true不得使用LOCK IN SHARE MODE、NOWAIT、SKIP LOCKED或advisory lock。
+  - 不commit／rollback／close／write，不查live order／assignment／schedule，不判定exact replay或identity conflict。
+  - malformed input使用typed application exception；malformed header／child／JSON、duplicate／missing／extra ordinal、item_count mismatch、錯誤batch linkage使用typed data-integrity exception；DB／driver failure使用typed infrastructure exception，不得解析message或降級為absent。
+  - children是已提交execution results；只要結構完整即原樣defensive-copy回replay result，不與request比較，不因generated identity或payload差異形成batch-key identity conflict。
+  - 驗收須覆蓋exact absent及零child query、present complete、zero／missing／extra／duplicate／反序ordinal、wrong linkage、strict bool、兩種SQL exact columns／parameters／ORDER BY／locking clause、id／occurred_at排除、JSON string與driver-decoded object、nested key ordering／array order、bool／date／decimal／null、non-object／invalid／nonfinite JSON、defensive-copy immutability及零writes。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_batch_replay_snapshot_read", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-replay-read"], "cwd": "project", "timeout": 90, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchReplayIdentityDecision
+- Sub Map: root
+- Type: internal_helper
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::decide_assignment_leave_resolution_batch_replay
+- Dependencies: [AssignmentScheduleLeaveSubstitutionBatchSchema, AssignmentScheduleLeaveSubstitutionEventSchema, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 純比對既有batch header的canonical request_snapshot／preview_fingerprint與Apply envelope的transport retry identity；children只作既有execution result回放，不參與identity。
+- Complexity: medium
+- Input:
+  - replay_snapshot: BatchReplaySnapshotRead output
+  - requested_identity: exact mapping keys=`batch_key,request_snapshot,preview_fingerprint`，直接來自ApplyRequestEnvelopeCanonicalization replay_identity_seed；不得含locked Preview、actor、reason、item_count或children
+- Output:
+  - decision: exact mapping keys=`status,replay_result`；absent精確為status=`absent`, replay_result=null；相等精確為status=`idempotent_replay`
+  - replay_result: exact mapping keys=`status,batch,events`；status=`idempotent_replay`，batch為replay_snapshot.header defensive copy，events為replay_snapshot.children依batch_item_index排序的defensive copies
+  - expected_failure: 同batch_key但request_snapshot或preview_fingerprint不同時拋typed application exception code=`batch_key_request_identity_conflict`，details exact keys=`batch_key,mismatched_fields`，mismatched_fields為只含`request_snapshot|preview_fingerprint`的canonical升冪非空list；不得包含payload、display text或完整敏感snapshot
+- Algorithm:
+  - 嚴格驗證兩個exact inputs；absent直接回absent。present時先驗證requested/header batch_key相等，再只比較header.request_snapshot與header.preview_fingerprint；兩者全等回persisted execution result，不同則回typed transport identity conflict。
+- Invariants:
+  - deterministic pure、input immutable、不得讀DB、重算Preview、解析message或比較children。
+  - actor、reason、item_count、contract display projection、DB-generated assignment／schedule ids、event_key、schedule_snapshot、payroll_snapshot及occurred_at全數排除於retry equality。
+  - replay result只由已驗證immutable header／children建立，不讀live business rows；children結構完整性由ReplaySnapshotRead保證。
+  - malformed input使用typed application exception，malformed replay dependency使用typed data-integrity exception；identity mismatch是transport/application exception，不得偽裝成business conflict result。
+  - 驗收須覆蓋absent、request drift、fingerprint drift、兩欄同時drift、actor／reason／children drift不影響equality、exact replay、stable minimal details、ordering及defensive-copy immutability。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_batch_replay_identity", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-replay-identity"], "cwd": "project", "timeout": 90, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchApplyCanonicalLockedFactsAcquisition
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::acquire_assignment_leave_resolution_batch_locked_facts
+- Dependencies: [AssignmentScheduleConflictSnapshotInternalHelpers, StaffOccupancyMutexService, AssignmentScheduleLeaveSubstitutionBatchSchema]
+- Description: 在caller-owned transaction內依固定順序取得order、assignment、staff mutex及完整conflict snapshot locks，只輸出locked facts；不查batch key、不做replay或pure決策。
+- Complexity: medium
+- Input:
+  - cursor: caller-owned DictCursor
+  - preview_request: canonicalized Batch Preview intent
+- Output:
+  - locked_facts: original_assignment_schedule、conflict_snapshot及canonical case／caregiver／date lock identity
+- Algorithm:
+  - 從request蒐集substitute extra staff ids，defer-only為空；依order、same-case assignment ids、canonical staff mutex ids、schedule ids、active lock ids、events、actual-hours guards、payments、settlements固定順序且各組升冪上鎖。
+  - 使用同一cursor及lock_rows=true呼叫Snapshot helper，精確定位original assignment與全部item schedule ownership後回傳。
+- Invariants:
+  - 只擁有row／mutex acquisition及canonical reads；不得查batch key、計算Preview／eligibility／fingerprint／authorization或管理transaction lifecycle。
+  - Snapshot必須使用extra_staff_ids語意；original assignment id不得冒充staff id，且不得逐item取得snapshot。
+  - 驗收須覆蓋固定lock order、反序items、defer-only空extra ids、duplicate substitute ids、ownership drift、typed dependency failure、零writes／commit／rollback／close。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_apply_locked_facts", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-locked-facts"], "cwd": "project", "timeout": 120, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchApplyAuthorizationDecision
+- Sub Map: root
+- Type: internal_helper
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::authorize_assignment_leave_resolution_batch_apply
+- Dependencies: [AssignmentScheduleLeaveSubstitutionBatchPreviewFromSnapshot, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 僅對不存在batch_key的新決定，以locked facts純重算fresh Batch Preview／confirmation；business conflicts作正常rejected result，ready且fingerprint相同才建立無persistence actions的immutable apply authorization。
+- Complexity: medium
+- Input:
+  - preview_request: canonical Preview request
+  - requested_preview_fingerprint: caller提交的canonical fingerprint
+  - canonical_apply_identity_metadata: batch_key、actor、reason
+  - locked_facts: CanonicalLockedFactsAcquisition output
+- Output:
+  - authorization_decision: exact status=`apply|rejected`、nullable apply_authorization及nullable business_conflicts；不得輸出requested replay child identity
+- Algorithm:
+  - 以locked facts呼叫BatchPreviewFromSnapshot一次並驗證exact pure Preview shape；blocked／requires_review／fingerprint mismatch均回正常rejected business result，ready且相同才建立authorization。
+- Invariants:
+  - deterministic pure、不讀DB、不接受client transition／eligibility；不得重算dependency內部Transition、eligibility或fingerprint；正常blocked／review／stale confirmation不得拋exception。
+  - authorization只含canonical intent、locked pure transition、locked eligibility、verified fingerprint及canonical apply identity；不得含DB mapping、generated identity、SQL action、audit payload或display projection。
+  - malformed request使用typed application exception，malformed locked/dependency facts使用typed data-integrity exception；驗收須覆蓋blocked／review／ready、stale fingerprint normal result、malformed dependency、authorization input immutability及無persistence／audit字段。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_apply_authorization_decision", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-authorization-decision"], "cwd": "project", "timeout": 90, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchApplyTransactionPreflight
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::prepare_assignment_leave_resolution_batch_apply
+- Dependencies: [AssignmentScheduleLeaveSubstitutionBatchApplyRequestEnvelopeCanonicalization, AssignmentScheduleLeaveSubstitutionBatchReplaySnapshotRead, AssignmentScheduleLeaveSubstitutionBatchReplayIdentityDecision, AssignmentScheduleLeaveSubstitutionBatchApplyCanonicalLockedFactsAcquisition, AssignmentScheduleLeaveSubstitutionBatchApplyAuthorizationDecision]
+- Description: caller-owned transaction內的medium薄編排；既有batch先做header-only retry decision，新batch才取得canonical locks並以最新DB fresh Preview／confirmation建立authorization。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - cursor: caller-owned transaction DictCursor
+  - request: raw Batch Apply request
+- Output:
+  - preflight: status=apply|idempotent_replay|rejected、nullable apply_authorization及nullable replay_result
+- Algorithm:
+  - canonicalize envelope後以lock_rows=false讀batch；present立即以envelope seed做header-only replay decision並回persisted execution result，不取得business locks、不重算Preview。
+  - absent才取得canonical locked facts，其後以lock_rows=true重查batch；競爭者已建立時做同一header-only replay decision，仍absent才執行fresh pure authorization。
+  - 不存在batch key不得假裝鎖row、不得使用advisory lock或新增mutex table。若兩transaction均recheck absent，outer Orchestration以header primary-key唯一競爭處理：輸家rollback後fresh transaction reread，header request/fingerprint相等回replay，不同回typed transport identity conflict。
+- Invariants:
+  - change_class=implements_existing_goal；只編排五個dependency，不得保留第二套validation、SQL、lock、replay compare、Preview或authorization邏輯。
+  - caller owns cursor；零writes、零commit／rollback／close；只有新batch的locked facts與authorization必須來自同一transaction，既有retry不得以live current projection覆寫persisted execution result。
+  - authorization不得含persistence actions或audit payload；mutation不得自行選擇或重算after plan。
+  - 驗收須覆蓋first-present exact/conflict、first-absent second-present exact/conflict、both-absent apply、blocked/review、stale fingerprint、fixed lock order、defer-only extra ids空、零writes及unknown DB例外原樣傳播。
+- Non Goals:
+  - 不執行mutation、不寫batch header／event、不管理transaction lifecycle、不處理跨assignment batch或部分成功。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_apply_preflight", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-apply-preflight"], "cwd": "project", "timeout": 120, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchApplyMutationHelpers
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::execute_assignment_leave_resolution_batch_mutations
+- Dependencies: [MultiCaregiverAssignmentRules, AssignmentPayrollReconciliationService, AssignmentScheduleLeaveSubstitutionEventSchema, AssignmentScheduleLeaveSubstitutionBatchSchema, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 僅依新batch的apply authorization，在caller-owned transaction內以absolute authorized after覆蓋current projection，fresh-read驗證後回傳execution results與pure audit facts；既有append-only events不作current authority。
+- Complexity: high
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - goal_ref:MCSUX-G-007
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-007
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - cursor: caller-owned transaction DictCursor
+  - apply_authorization: BatchApplyTransactionPreflight 唯一產生的 immutable pure-domain authorization
+- Output:
+  - mutation_result: persisted_transition_result（canonical final service plan／daily ownership／service impacts）、final_verification（authorized transition、ownership、service commitment、payroll ownership）與供外層audit projection使用的pure successful business facts。
+- Algorithm:
+  - 嚴格驗證authorization provenance、canonical intent、pure transition、eligibility與fingerprint完整一致；任一缺少／多出／錯誤型別零寫入。
+  - 將authorized pure transition交由本節點內部persistence adapter一次套用完整after plan；不得逐item fold、重算transition或讓暫時writes成為後續item輸入。
+  - persistence adapter自行管理domain ref至persisted row的暫時mapping；generated identity不得回寫或污染authorized transition。
+  - fresh-read final business state並轉回pure service plan；精確比對authorized after plan、daily ownership與service impacts。
+  - 驗證service commitment及payroll ownership；不得建立、更新或取消payment／settlement。
+  - 產生pure successful audit facts交由Orchestration投影既有append-only records；本節點不設計或輸出DB payload。
+- Invariants:
+  - change_class=implements_existing_goal；只落實authorized aggregate after plan，不新增部分成功、補償交易或跨 assignment batch。
+  - 只接受apply authorization；不得接受API request、client plan、public Preview dict、逐項fingerprint／event_key或自行重新選擇after plan。
+  - persistence-generated identity不得回寫或污染authorized pure transition；current projection的persisted final plan必須語意等於authorized absolute after，舊batch events保持append-only且不得阻止新batch_key的新決定。
+  - 所有writes必須由同一authorized transition導出；不得循環呼叫單日mutation helper或逐item fold。
+  - final daily ownership不得有缺口、重複owner、未處置leave day或額外service day；substitute必須是獨立單日service segment。
+  - 成功輸出前必須fresh-read驗證最多四段、日層級唯一ownership、service commitment與payroll ownership；任一不一致由外層rollback。
+  - pure audit facts不得反向成為domain authority；本節點不得INSERT／UPDATE／DELETE audit records。
+  - business conflicts不得進入本節點；malformed authorization使用typed application exception，final projection／audit invariant違反使用typed data-integrity exception，DB／driver failure使用typed infrastructure exception。不得commit、rollback、close cursor／connection或建立、更新、取消payment／settlement。
+- Non Goals:
+  - 不鎖資料、不重算Preview／fingerprint、不判定replay、不投影或寫batch header／event、不管理transaction。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_authorized_transition_mutation", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-authorized-transition-mutation"], "cwd": "project", "timeout": 120, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionBatchApplyOrchestration
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::apply_assignment_leave_resolution_batch
+- Dependencies: [AssignmentScheduleRestDateService, AssignmentScheduleLeaveSubstitutionBatchApplyTransactionPreflight, AssignmentScheduleLeaveSubstitutionBatchApplyMutationHelpers, AssignmentScheduleLeaveSubstitutionBatchSchema, AssignmentScheduleLeaveSubstitutionEventSchema, AssignmentLeaveResolutionTypedExceptionContract]
+- Description: 擁有public Batch Apply的唯一transaction lifecycle，編排preflight authorization、authorized pure transition persistence、final verification與pure audit facts至既有append-only records的投影，最後只commit一次。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - goal_ref:MCSUX-G-007
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-007
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - request: contract_version=`assignment-leave-substitution-batch-apply/v1`、case_no、original_assignment_id、非空 items、preview_fingerprint、batch_key、actor、reason
+- Output:
+  - result: applied或idempotent_replay，及authorized canonical service_plan_transition／eligibility、final verification與canonical audit projection。
+  - business_result: rejected business conflicts由preflight正常回傳；本節點不以exception表示blocked／review／stale confirmation
+  - technical_failure: typed application、data-integrity或infrastructure exception，交集中API exception handler映射
+- Algorithm:
+  - 開啟單一 connection/cursor transaction，呼叫 BatchApplyTransactionPreflight；rejected business result時rollback並正常回傳，idempotent_replay時零寫入並回persisted execution result。
+  - preflight=apply時只把apply authorization傳入BatchApplyMutationHelpers，不重做transition、eligibility、ordering、fingerprint或薪資判斷。
+  - 新batch mutation成功後將pure audit facts投影為append-only batch header與ordinal execution events；每個event_key精確為 `blr1_` + lowercase SHA-256 hex of UTF-8 bytes `batch_key + ':' + canonical base-10 batch_item_index`，總長69；header先於FK children且不得逐筆commit。
+  - 若header INSERT因batch_key primary-key競爭失敗，必須rollback整個transaction，以新transaction重讀header與execution children；header request_snapshot／fingerprint相等回idempotent_replay，不同拋typed `batch_key_request_identity_conflict`。children只做integrity與response，不參與identity。
+  - audit 寫入完成後核對 header item_count 與 child ordinal／event count，再只 commit 一次；任一 preflight、mutation、header、child event 或 final check 例外皆 rollback。
+  - finally 關閉 cursor 與 connection；將既有 typed domain failure 原樣傳遞，未知例外不得包成 validation/conflict。
+- Invariants:
+  - change_class=implements_existing_goal；只擁有 AC-clar-008 Batch Apply lifecycle，既有單日 Apply orchestration、event_key 與 API 契約完全不變。
+  - 一個 public call 只能建立一個 transaction；不得逐日期呼叫單日 Apply、開啟 nested transaction、部分 commit、補償 commit 或背景續寫。
+  - mutation只能接受同一transaction preflight authorization；Router／client request、public Preview dict、provisional plan或preflight前snapshot不得直接進入mutation。
+  - 新 batch 必須恰有一個 append-only header及 item_count 筆 append-only events；header 必須先於 FK children 寫入，所有 children 必須共用 batch_key 且 ordinal 連續。
+  - exact retry必須零INSERT／UPDATE／DELETE且不得新增第二批或重複event；同batch_key request conflict必須rollback並保留原資料。新business決定必須使用新batch_key，依最新locked DB fresh Preview／confirmation覆蓋current projection並追加新events，舊events不更新不刪除。
+  - batch_key unique collision 不得只依 exception message 分類，也不得直接暴露為 infrastructure error；只能在完整 rollback 後以 canonical batch primary-key collision 證據進入一次 replay reread，且不得重做 mutation。
+  - 成功路徑只允許一次 commit；任何日期、final invariant、header 或 child event 失敗必須 rollback 全部 assignment、schedule、hours、payroll allocation 與 audit writes。
+  - 不得建立、更新、取消 payment／settlement，不得重算 Preview、鎖順序、assignment rules 或 payroll allocation。
+  - Orchestration不得解讀或修改pure transition，不建立第二套fingerprint／eligibility；audit projection與occurred_at不得反向成為domain authority或ordering authority。
+  - event_key derivation只接受canonical non-negative base-10 ordinal（0或無前導零十進位）；hash input不得加空白、JSON、occurred_at、actor、reason或locale encoding。
+  - typed application／data-integrity／infrastructure exceptions必須rollback後原樣交集中handler；不得解析message、包成business conflict或在此決定HTTP。
+- Non Goals:
+  - 不處理跨案件／跨 original assignment batch、部分成功、失敗嘗試持久化、付款建立、歷史沖正或 UI。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "batch_leave_resolution_apply_orchestration", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-batch-apply-orchestration"], "cwd": "project", "timeout": 120, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionApplyTransactionPreflight
+- Sub Map: root
+- Type: service
+- State: `dirty`
+- Source: services/assignment_schedule_rest_date_service.py::prepare_assignment_leave_resolution_apply
+- Dependencies: [AssignmentScheduleLeaveSubstitutionPreviewFromSnapshot, AssignmentScheduleConflictSnapshotInternalHelpers, StaffOccupancyMutexService, AssignmentScheduleLeaveSubstitutionBatchSchema]
+- Description: 在 caller-owned transaction 內依固定順序鎖定單日順延／代班涉及的 canonical facts，重算 Preview 並核對 fingerprint、historical locks 與 event_key 冪等 identity；只產生不可變 apply command，不寫業務資料。
+- Complexity: medium
+- Input:
+  - cursor: caller-owned transaction DictCursor
+  - request: 已由 API schema 驗證的單日順延／代班命令
+- Output:
+  - preflight: apply、idempotent_replay 或 rejected，及 canonical locked snapshot、recomputed preview、mutation command、既有 event identity
+- Algorithm:
+  - 嚴格驗證 request，不接受 client 傳入 historical_fact_state、鎖定狀態、服務時數、雙倍薪或 provisional rows。
+  - 依 order、案件全部 assignments id、受影響 staff mutex、schedules id、active locks、events、工時調整、付款、月結的固定 canonical 順序鎖定。
+  - 使用 AssignmentScheduleConflictSnapshotInternalHelpers 與同一 cursor 重讀 facts，以 Preview 相同規則重算結果；非 ready 或 fingerprint 不相等時拒絕。
+  - event_key 已存在時，完整 request identity 與既有事件 payload 相等才回傳 idempotent_replay；不同 payload fail closed。
+- Invariants:
+  - 規格出處：`多月嫂排班UX改善討論紀錄.md`「預覽仍須在後端完成檔期、區段、日排班、服務總量及鎖定檢查」「付款與月結防護」；滿足 Apply 不信任 client facts 且異常狀態不可改寫已結算事實。
+  - 架構出處：既有 `StaffOccupancyMutexService`、`AssignmentScheduleConflictSnapshotInternalHelpers` 與 Preview fingerprint 契約；滿足同一 transaction 重查與並行衝突防護。
+  - 只能使用 caller cursor；不得建立、commit、rollback、close transaction，不得 INSERT、UPDATE、DELETE 或 REPLACE。
+  - 固定鎖順序不得依 request list 順序改變；assignment、staff、schedule 與 lock ids 必須 canonical 升冪。
+  - 歷史日期本身不得阻擋修改；unlocked 可產生 apply command，locked 必須拒絕；無 assignment-owned schedule 的 bootstrap 必須轉介既有 OrderAssignmentSynchronization。
+  - preflight 只能回傳 canonical command，不得修改 assignment、schedule、actual_hours、event、payment、settlement 或 double-pay。
+  - transaction 內重算必須沿用 PreviewFromSnapshot 的二軌結果；canonical blocked／requires_review 應形成穩定 rejected preflight，typed dependency error 與未預期 integrity／DB 例外不得靠 message classifier 改類。
+- Non Goals:
+  - 不執行順延／代班 mutation，不寫事件，不管理 transaction lifecycle。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "leave_resolution_apply_preflight", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-apply-preflight"], "cwd": "project", "timeout": 75, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionApplyMutationHelpers
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/assignment_schedule_rest_date_service.py::execute_assignment_leave_resolution_mutations
+- Dependencies: [MultiCaregiverAssignmentRules, AssignmentPayrollReconciliationService, AssignmentScheduleLeaveSubstitutionEventSchema, AssignmentScheduleLeaveSubstitutionBatchSchema]
+- Description: 依已鎖定且已核對 fingerprint 的 canonical mutation command，在 caller-owned transaction 內執行順延或獨立代班 assignment、schedule 與 actual_hours 寫入，產生待追加的 audit snapshots；不 commit、不建立付款。
+- Complexity: medium
+- Input:
+  - cursor: caller-owned transaction DictCursor
+  - mutation_command: Apply preflight 產生的 canonical、不可由 client 自組的命令
+- Output:
+  - mutation_result: 最終 assignments、schedules、actual_hours、payroll snapshot 與待寫 event payload
+- Algorithm:
+  - defer 時將原休假日設為非工作日並清除雙倍薪，原區段補足一個工作日，後續 assignment 與日排班等量後移。
+  - substitute 時將原休假日設為非工作日並清除雙倍薪，建立連結 original assignment/work_date 的獨立單日 substitute assignment，保留 prefix/substitute/suffix ownership。
+  - 依最終工作日 ownership 重算 assignment actual_hours；以既有 reconciliation 規則分配代班 family floor fee，尾差留原 assignment。
+  - 寫入後驗證最多四個有效 assignment rows、逐日唯一 ownership、無 gap/overlap，且總 actual_hours 精確等於訂單需求。
+  - 組成 assignment 級 schedule/payroll snapshots 與 append-only event payload，但不自行 commit 或 insert event。
+- Invariants:
+  - 規格出處：`多月嫂排班UX改善討論紀錄.md`「順延補足一天」「代班建立獨立 assignment」「代班日只歸屬代班月嫂」「assignment 精確薪資與樓層費比例」「訂單總服務量守恆」；滿足休假後服務與薪資 ownership 不重複、不遺漏。
+  - 規格出處：`出勤天數精算與動態排假業務規則.md`「足額天數保障」及 `多月嫂排班與行事曆規格.md` assignment-owned schedule／actual_hours 契約。
+  - 只接受 preflight canonical command；不得接受 API request dict、client provisional rows 或自行重查／重新判斷 historical state。
+  - substitute 必須建立獨立單日 assignment，不得 UPDATE 原 assignment.staff_id；同日不得雙重 ownership。
+  - 新 schedule 預設 is_double_pay=false；本節點只可在休假日改為非工作日時清除雙倍薪，不得自行啟用。
+  - 不得建立、更新、取消 payment 或 settlement；不得 commit、rollback、close 或 append event。
+  - 任一步失敗必須拋出，由外層 orchestration rollback；不得吞掉錯誤或回傳部分成功。
+- Non Goals:
+  - 不鎖資料、不重算 Preview、不核對 fingerprint／event_key、不管理 transaction、不建立付款。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "leave_resolution_apply_mutation", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-apply-mutation"], "cwd": "project", "timeout": 75, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleLeaveSubstitutionApplyOrchestration
+- Sub Map: root
+- Type: service
+- State: `dirty`
+- Source: services/assignment_schedule_rest_date_service.py::apply_assignment_leave_resolution
+- Dependencies: [AssignmentScheduleRestDateService, AssignmentScheduleLeaveSubstitutionApplyTransactionPreflight, AssignmentScheduleLeaveSubstitutionApplyMutationHelpers, AssignmentScheduleLeaveSubstitutionEventSchema, AssignmentScheduleLeaveSubstitutionBatchSchema]
+- Description: 在既有 assignment 排休服務內擁有單一 transaction lifecycle，依序編排 preflight 與 mutation helper，最後追加不可變事件並單次 commit；任何失敗完整 rollback。
+- Complexity: medium
+- Input:
+  - case_no: trim 後非空的 canonical 案件編號
+  - original_assignment_id: 發生休假的原正式 assignment 正整數 id
+  - original_schedule_id: 被處置的原 assignment-owned 單日排班正整數 id
+  - work_date: 明確休假日期，必須等於 original_schedule_id.work_date
+  - resolution_type: defer_following_assignments 或 substitute
+  - substitute_staff_id: substitute 時必填的代班月嫂正整數 id；順延時必須為 null
+  - preview_fingerprint: 前次 ready Preview 回傳的 canonical SHA-256 fingerprint
+  - event_key: 呼叫端提供、trim 後非空的全域唯一冪等鍵
+  - actor: 執行處置的非空管理員識別
+  - reason: 非空休假／代班原因
+- Output:
+  - result: applied 或 idempotent_replay，及 canonical event、assignment、schedule、工時與 payroll reconciliation snapshots
+  - expected_failure: 拋出 AssignmentLeaveResolutionDomainError(category, code, reason, details)；stale fingerprint 與 event-key identity conflict 必須使用各自 category，不得混用一般 ValueError 或模糊 rejected result。
+- Algorithm:
+  - 開啟單一 connection/cursor transaction，呼叫 ApplyTransactionPreflight；rejected 時 rollback，idempotent_replay 時不寫入並安全結束。
+  - preflight=apply 時只將其 canonical mutation command 傳入 ApplyMutationHelpers，不重做 SQL、規則或薪資分配。
+  - mutation 完成後 append 一筆 payload-bound 不可變休假／代班事件，最後只 commit 一次。
+  - 任一 preflight、mutation 或 event 寫入例外皆 rollback；finally 關閉 cursor 與 connection。
+- Invariants:
+  - 規格出處：`多月嫂排班UX改善討論紀錄.md`「跨 assignment 順延／代班 preview／apply」「append-only 休假調整／代班事件」；滿足正式套用與可追蹤稽核。
+  - 架構出處：既有 transaction ownership、event-last 與 rollback 契約；本節點只擁有 lifecycle，不重複實作 preflight 或 mutation。
+  - 規格出處：`多月嫂排班UX改善討論紀錄.md`「休假調整提供順延／代班」「代班 assignment 與薪資歸屬」「跨 assignment 順延／代班 preview／apply」；滿足管理員明確選擇處置、代班獨立 ownership 及後端套用需求。
+  - 規格出處：`出勤天數精算與動態排假業務規則.md`「足額天數保障」「儲存放假與動態順延機制」及 `多月嫂排班與行事曆規格.md`「排班時數守恆與薪資自動計算」；滿足順延補足服務日與訂單總服務量守恆。
+  - 規格出處：2026-07-28 人工核准決策「歷史日期本身可修改，依 bootstrap／unlocked／locked facts 決定處置」；取代討論紀錄中以日期一律禁止改寫的舊描述。
+  - 不得建立第二套 transaction service、schedule read、availability SQL、mutex、assignment rules 或 payroll allocation；只編排既有能力。
+  - Apply 必須在同一 transaction 內重算 Preview，不得信任 client 傳入的 provisional plan、historical_fact_state、衝突、薪資、雙倍薪或服務總量。
+  - 固定鎖順序不得依 request list 順序改變；所有 assignment、staff、schedule 與 lock ids 必須 canonical 排序，避免交叉操作死鎖。
+  - original_schedule_id ownership、case_no、staff_id 與 work_date 必須精確相符；legacy assignment_id=null、cross-case 或 unresolved ownership 必須 fail closed。
+  - 歷史日期本身不得阻擋修改；既有原排班但無付款、有效月結或人工工時鎖時可依 unlocked 流程套用並寫 audit，locked 必須拒絕。
+  - 完全沒有 assignment-owned schedule 的歷史 bootstrap 不得由本入口處理，必須沿用 OrderAssignmentSynchronization Preview／Apply。
+  - substitute 必須建立獨立單日 assignment，不得重用或改寫原 assignment.staff_id；同日不得形成雙重 ownership。
+  - 所有新日排班預設 is_double_pay=false；本操作只可在休假日被改為非工作日時清除既有雙倍薪，不得自行啟用其他日期雙倍薪。
+  - 不得建立、更新、取消 staff_payments 或月結；付款存在或有效月結存在時必須 fail closed。
+  - event 必須 append-only 且 payload 綁定冪等；不得 UPDATE、DELETE 或以相同 event_key 接受不同 request。
+  - 成功路徑只允許一次 commit；所有例外路徑必須 rollback，且不得留下部分 assignment、schedule、hours 或 event 寫入。
+  - 所有預期領域失敗必須統一拋出 AssignmentLeaveResolutionDomainError；preview_fingerprint_mismatch 使用 stale_preview，event key 綁定不同 request identity 使用 event_key_identity_conflict，鎖定 facts 使用 locked，其餘依 not_found、validation_error 或 conflict 分類。
+  - idempotent_replay 維持成功結果；未預期 integrity、DB、event insert 或 infrastructure 例外不得降級為領域錯誤，必須 rollback 後原樣傳播。
+- Non Goals:
+  - 不搜尋、推薦、聯繫或自動選擇代班月嫂。
+  - 不處理一般區段重配、無 schedule 歷史 bootstrap、付款建立、結算沖正或雙倍薪手動設定。
+  - 不新增 Router 或 public API schema。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_assignment_rest_date_service.py", "-k", "leave_resolution_apply", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-leave-apply"], "cwd": "project", "timeout": 90, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
 
 ##### Module: MultiCaregiverScheduleReadService
 - Sub Map: root
 - Type: service
-- State: `planned`
-- Source: services/multi_caregiver_schedule_read.py::get_assignment_schedule
+- State: `dirty`
+- Source: services/multi_caregiver_schedule_read.py::AssignmentScheduleReadDomainError,get_assignment_schedule
 - Dependencies: [MultiCaregiverScheduleSchema]
 - Description: 依明確的正式服務指派 id 唯讀取得月嫂、服務區段、目前 actual_hours 與該指派專屬的每日排班，供多月嫂行事曆與調整介面使用。
 - Complexity: low
@@ -627,16 +1801,125 @@
 - Output:
   - assignment: 指派、案件、月嫂姓名、服務區段與目前 actual_hours
   - schedule_days: 僅屬於 assignment_id 的每日排班列，依日期排序
+  - database_current_date: 與調整服務一致的資料庫目前日期
+  - adjustment_guard: cancelled、actual-hours adjustment、付款及月結鎖定狀態與 deterministic reasons
+  - expected_failure: AssignmentScheduleReadDomainError(category, code, details)，只表示 assignment／schedule not-found 或 request identity mismatch。
 - Algorithm:
-  - 驗證 assignment_id 為正整數，讀取正式指派及其案件、月嫂識別資料；查無資料時拒絕。
-  - 只以 assignment_id 查詢 staff_schedule，依 work_date 排序並回傳日層級工作日、雙倍薪與備註。
+  - 驗證 assignment_id 為正整數，以 SELECT 讀取資料庫 CURRENT_DATE、正式指派及其案件、月嫂識別資料；查無資料時拒絕。
+  - 分別以唯讀存在性查詢取得 actual_hours_adjustments、非 cancelled staff_payments 與有效月結明細，依固定順序組成 adjustment_guard；不得以其中一項推測其他項不存在。
+  - 只以 assignment_id 查詢 staff_schedule，依 work_date、id 排序；每列核對 assignment_id、case_no、staff_id 均與正式指派一致，並依 database_current_date 標記 is_historical。
+  - 直接回傳 assignment 自有的 planned_hours 與 actual_hours，不從日列重算、不依 staff_id 合併同月嫂其他 assignment。
 - Invariants:
   - 必須由 UI 或 API 顯式提供 assignment_id；不得由 orders.staff_id、case_no、日期或月嫂名稱推測指派。
   - 不得回傳 assignment_id 為 NULL 的 legacy 排班列，亦不得混入其他指派的排班列。
+  - schedule row 即使 assignment_id 相同，只要 case_no 或 staff_id 與 assignment 不一致也必須 fail-closed；不得把資料完整性錯誤包成正常日列。
+  - 每個 schedule day 必須以同一次讀取取得的 database_current_date 標記 `is_historical = work_date < database_current_date`；同日不得標成歷史。
+  - adjustment_guard 必須分別揭露 cancelled assignment、人工 actual-hours adjustment、非取消付款及有效月結鎖，reasons 使用固定順序且不得因其中一項存在就跳過其他存在性查詢。
   - 唯讀：不得建立、調整、刪除排班、訂單、薪資或結算資料。
-  - planned_hours 僅供相容資訊；行事曆呈現與後續調整的正式時數為 actual_hours。
+  - 不得使用 FOR UPDATE、commit 或 rollback；所有 SQL 必須為 SELECT，connection 最終必須關閉。
+  - planned_hours 僅供相容資訊；行事曆呈現與後續調整的正式時數為該 assignment 自有 actual_hours，不得依月嫂姓名或 staff_id 合併多個不連續 assignment。
+  - 測試必須以 query-aware fake／stateful fixture 同時放入相同 staff_id 的兩個 assignment 與 assignment_id=NULL 的 legacy 排班；呼叫其中一個 assignment_id 時必須正常成功、只回傳該 assignment 的日列，並明確斷言未回傳另一 assignment 或 legacy 日列。不得以 mock 無視 SQL 篩選後故意混入其他 assignment、再期待 fail-closed，冒充正常隔離證據。
+  - 正常隔離案例必須讓兩個 assignment 具有不同 planned_hours／actual_hours，並斷言回傳值保持目標 assignment 自有工時且未依 staff_id 合併；另以獨立案例保留 assignment_id、case_no、staff_id ownership mismatch 的 fail-closed 防線。
+  - 測試另須覆蓋固定 DB 日期的歷史／同日／未來標記、四種 adjustment guard 可同時存在，以及零寫入／零 transaction boundary。
+  - assignment／schedule 不存在與 request identity mismatch 必須使用穩定 typed error；schedule row 與 DB canonical assignment 的 case／staff ownership 不一致屬 Server integrity failure，必須原樣 fail closed，不得偽裝成 client validation。
+  - 不得以 exception message 分類；DB driver、connection、row shape、duplicate canonical row 或其他 infrastructure／integrity 例外必須原樣傳播。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_read.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Observability: not_required
+
+##### Module: AssignmentScheduleConflictSnapshotService
+- Sub Map: root
+- Type: service
+- State: `dirty`
+- Source: services/multi_caregiver_schedule_read.py::AssignmentScheduleConflictSnapshotDomainError,get_case_schedule_conflict_snapshot
+- Dependencies: [MultiCaregiverScheduleSchema, CaregiverAvailabilityLockSchema, AssignmentScheduleLeaveSubstitutionEventSchema, AssignmentScheduleConflictSnapshotInternalHelpers]
+- Description: 以單一唯讀 DB session 取得休假／順延／代班 Preview 所需的全案 assignment、日排班、active lock 與歷史事實快照；只提供 canonical facts，不計算候選或修改資料。
+- Complexity: medium
+- Required Context:
+  - goal_ref:MCSUX-G-005
+  - goal_ref:MCSUX-G-006
+  - acceptance_ref:MCSUX-AC-005
+  - acceptance_ref:MCSUX-AC-006
+  - acceptance_ref:MCSUX-AC-009
+  - approved_clarification_ref:AC-clar-001
+  - approved_clarification_ref:AC-clar-002
+  - approved_clarification_ref:AC-clar-008
+- Input:
+  - case_no: trim 後非空的 canonical 案件編號。
+  - extra_staff_ids: provisional plan 額外引入、尚未存在於同案 assignments 的 strict positive staff id 清單；可為空，輸入順序與重複不具語意。
+  - range_start: 精確 YYYY-MM-DD 查詢起日。
+  - range_end: 精確 YYYY-MM-DD 查詢迄日。
+- Output:
+  - database_current_date: 同一唯讀 session 的 DB CURRENT_DATE。
+  - assignments: 案件所有正式 assignment canonical rows。
+  - assignment_schedule_days: 範圍內 assignment-owned 與 legacy schedule occupancy facts。
+  - active_lock_days: 範圍內 active waiting-deposit lock facts。
+  - historical_facts: leave/substitution events、actual_hours_adjustments、non-cancelled payments、active settlement indicators。
+  - expected_failure: AssignmentScheduleConflictSnapshotDomainError(category, code, details)；category allowlist 精確為 `not_found|conflict`。`case_not_found` details 精確為 `{"case_no": str}`；`assignment_identity_changed_during_snapshot` details 精確為 `{"case_no": str, "before": [{"assignment_id": int, "staff_id": int}, ...], "after": [{"assignment_id": int, "staff_id": int}, ...]}`，before／after 均為依 assignment_id、staff_id 排序且去重的 canonical identity lists。
+- Algorithm:
+  - 嚴格驗證 case_no、extra_staff_ids 與日期範圍；extra_staff_ids 可為空，但每項必須是非 bool 的正整數，並 canonicalize 為升冪去重清單；不得修剪日期、讀取主機 clock 或接受 bool id。
+  - 每次 public call 只取得一個 connection/cursor，先讀 DB CURRENT_DATE 與案件存在性；案件不存在時只拋出 `AssignmentScheduleConflictSnapshotDomainError(not_found, case_not_found, {"case_no": case_no})`。
+  - 讀取案件 assignments 後，先從每列的 strict positive assignment_id、staff_id 建立依 assignment_id、staff_id 排序且去重的 initial identity，再建立 `query_staff_ids = sorted(assignment-owned staff ids ∪ extra_staff_ids)`。
+  - 依既有固定順序讀取範圍內 schedules、active lock days、events、actual-hours adjustments、payments 與 settlements；schedule 必須涵蓋 requested case 的全部日列及 query_staff_ids 的跨案占用，active lock 只查 query_staff_ids。query_staff_ids 為空時 schedule 使用 case-only 查詢且 active_lock_days 精確回傳空清單，不得產生空 `IN ()`。
+  - 所有既有查詢完成後，以相同 connection/cursor 再做一次只讀案件 assignment identity 查詢並套用相同 strict normalization；final identity 與 initial identity 不同時只拋出 `AssignmentScheduleConflictSnapshotDomainError(conflict, assignment_identity_changed_during_snapshot, {"case_no": case_no, "before": initial_identity, "after": final_identity})`。
+  - 將 DB date/datetime 正規化為 YYYY-MM-DD，依 assignment_id、staff_id、work_date、source id 穩定排序後回傳。
+  - finally 關閉 cursor 與 connection；不得 commit、rollback、FOR UPDATE 或寫入資料。
+- Invariants:
+  - 完全唯讀；不得 INSERT、UPDATE、DELETE、REPLACE、commit、rollback、FOR UPDATE 或取得 mutex。
+  - 只回傳 canonical conflict facts，不判斷候選、順延、代班、historical_fact_state 或 ready 狀態。
+  - assignment-owned schedule 必須保留 assignment_id；assignment_id=null 的 legacy schedule 必須標記 requires_review，不得推測 ownership。
+  - active lock 只接受 header active/is_active=1 且 day active_marker=1；released、converted、cancelled 或 inactive rows 不得回傳為占用。
+  - case_no、由同案 assignment-owned staff ids 與 extra_staff_ids 組成的 query_staff_ids，以及日期範圍必須套用於所有適用查詢；不得使用 assignment id、orders.staff_id、姓名或其他案件資料推測 staff identity。
+  - 任一 DB row shape、日期、id 或 ownership 不合法時 fail closed，不得靜默忽略。
+  - typed error category 只允許 not_found／conflict，code 只允許 case_not_found／assignment_identity_changed_during_snapshot；不得用 typed error 表示其他失敗。
+  - case 不存在必須使用 `not_found/case_not_found`；只有 initial 與 final canonical assignment identity 不同才使用 `conflict/assignment_identity_changed_during_snapshot`。malformed／duplicate Server facts、一般 ValueError、DB 或 infrastructure failure 必須原樣傳播。
+  - 不得解析一般 ValueError 或其他 exception message 產生 domain category。
+  - 測試必須覆蓋 empty extra_staff_ids（案件有／無 assignments）、重複亂序 extra IDs、與 assignment-owned staff 重疊、bool／非整數／零／負值在查詢前拒絕、case-only schedule 與空 active locks 分支、case_not_found 精確 details、identity unchanged（含 before／after 皆空）成功、identity 新增／刪除／staff 變更的 conflict、before／after 穩定排序去重、malformed／duplicate identity 與 DB／infrastructure 例外原樣傳播，以及零寫入／零 transaction／零 FOR UPDATE。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_read.py", "-k", "conflict_snapshot", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-conflict-snapshot"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+- Non Goals:
+  - 不修改既有 get_assignment_schedule、availability query、assignment、schedule、lock、event、payment 或 settlement。
+  - 不產生 Preview plan、不建立代班 assignment、不寫 audit、不提供 API。
+  - 不為 Preview 開 transaction、提高隔離層級、取得鎖或將一般 validation／integrity／infrastructure failure 重新分類為 typed domain error。
+- Observability: not_required
+
+##### Module: AssignmentScheduleConflictSnapshotInternalHelpers
+- Sub Map: root
+- Type: service
+- State: `planned`
+- Source: services/multi_caregiver_schedule_read.py::_get_case_schedule_conflict_snapshot_with_cursor,get_case_schedule_conflict_snapshot_with_cursor
+- Dependencies: [MultiCaregiverScheduleSchema, CaregiverAvailabilityLockSchema, AssignmentScheduleLeaveSubstitutionEventSchema]
+- Description: 以 caller-owned DictCursor 執行與 public conflict snapshot 相同的 canonical 查詢與正規化，讓唯讀 Preview 與 Apply transaction 共用單一事實來源而不另開 connection。
+- Complexity: medium
+- Input:
+  - cursor: caller-owned、回傳 mapping rows 的資料庫 cursor
+  - case_no: trim 後非空的 canonical 案件編號
+  - extra_staff_ids: provisional plan 額外引入、尚未存在於同案 assignments 的 strict positive staff id 清單；可為空，輸入順序與重複不具語意
+  - range_start: 精確 YYYY-MM-DD 查詢起日
+  - range_end: 精確 YYYY-MM-DD 查詢迄日
+  - lock_rows: 嚴格 bool；false 為 Preview 唯讀，true 為既有 transaction 內 Apply 鎖定
+- Output:
+  - snapshot: 與 AssignmentScheduleConflictSnapshotService 完全相同的 canonical snapshot
+- Algorithm:
+  - 復用單一輸入與 row validation 路徑，逐項拒絕 bool／非整數／零／負值，再將 extra_staff_ids canonicalize 為升冪去重清單並驗證日期範圍。
+  - 依固定順序查詢 DB CURRENT_DATE、order 與案件 assignments；從 canonical assignments 取得 assignment-owned staff ids，建立 `query_staff_ids = sorted(assignment-owned staff ids ∪ extra_staff_ids)`。
+  - 使用 query_staff_ids 查詢範圍 schedules 與 active lock days，再查 events、actual-hours adjustments、payments 與 settlements；query_staff_ids 為空時 schedule 使用 case-only 查詢且略過 active-lock staff query，回傳空 active_lock_days，不得產生空 `IN ()`。
+  - lock_rows=true 時只對支援且屬本 transaction ownership 的 canonical SELECT 加入 FOR UPDATE；false 時所有查詢保持唯讀。
+  - 正規化、ownership 驗證與排序後回傳相同 snapshot shape；不得管理 connection 或 transaction。
+- Invariants:
+  - 規格出處：`多月嫂排班UX改善討論紀錄.md`「代班候選必須確認正式服務或等待訂金日期鎖衝突」「兩個分頁共用 assignment-aware 預覽、衝突檢查與套用服務」；滿足 Preview／Apply 使用同一 canonical facts 的要求。
+  - 架構出處：既有 `AssignmentScheduleConflictSnapshotService` 與 `StaffOccupancyMutexService` transaction ownership 契約；此 helper 僅消除重複 SQL，讓 Apply 在 caller transaction 內重查並鎖定相同 facts。
+  - 不得建立或關閉 connection/cursor，不得 commit、rollback、INSERT、UPDATE、DELETE、REPLACE 或取得 mutex。
+  - lock_rows 必須為 type(value) is bool；不得接受 truthy 值或由環境推測。
+  - public AssignmentScheduleConflictSnapshotService 必須委派此 helper 並固定 lock_rows=false；不得保留第二套 SQL 或 row normalization。
+  - lock_rows=true 只能加強同一批 canonical SELECT 的 transaction row lock，不得改變輸出內容、排序或查詢範圍。
+  - case_no、extra_staff_ids、由 assignments 派生的 query_staff_ids、日期、ownership、legacy requires_review 與 active lock 篩選契約必須與 public snapshot 完全一致。
+  - 相同 cursor facts 與輸入在 lock_rows false/true 下必須得到相等 snapshot；差異只允許 SQL locking clause。
+- Non Goals:
+  - 不開啟 transaction、不決定 lock order、不計算 Preview、historical_fact_state 或 Apply plan。
+  - 不寫 assignment、schedule、event、payment、settlement 或 lock。
+- Verification:
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_read.py", "-k", "conflict_snapshot", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-assignment-conflict-snapshot-helper"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
 
 ##### Module: MultiCaregiverCaseAssignmentListService
@@ -650,14 +1933,21 @@
 - Input:
   - case_no: 管理端明確選擇的案件編號
 - Output:
-  - assignments: 依 assigned_start_date 排序的未取消正式指派、月嫂姓名、服務區段與 actual_hours
+  - assignments: 依 assigned_start_date、assignment_id 排序的未取消正式指派；每筆保留明確 assignment_id、月嫂、服務區段、planned_hours 與 actual_hours
 - Algorithm:
-  - 驗證 case_no 為非空字串；只查詢該案件的 case_staff_assignments 與月嫂名稱。
-  - 排除 cancelled 指派，依服務開始日與 id 排序後回傳，不讀取 staff_schedule。
+  - 驗證並 trim case_no；只以正規化後的 case_no 查詢 case_staff_assignments、orders 與 staff，不從 orders.staff_id、月嫂姓名、日期或 staff_schedule 推測指派。
+  - SQL 排除 cancelled 指派，依 assigned_start_date、id 穩定排序；逐列核對 case_no、正整數 assignment_id／staff_id 與有效的含端點服務日期後回傳。
+  - 每一筆 assignment 原樣保留自己的 planned_hours 與 actual_hours；相同 staff_id 的多個不連續 assignment 不得分組、去重或合併。
 - Invariants:
   - 必須由 UI 或 API 顯式提供 case_no；不得由 orders.staff_id、日期或月嫂名稱推測案件或指派。
   - 只回傳未取消的正式服務指派；不得回傳 legacy 排班或以 orders.staff_id 合成指派。
-  - 唯讀：不得建立、調整、刪除排班、訂單、薪資或結算資料。
+  - 每筆回傳列的 case_no 必須等於正規化後的輸入；assignment_id 與 staff_id 必須為正整數，assigned_start_date／assigned_end_date 必須存在且起日不晚於迄日，否則 fail-closed。
+  - 相同 staff_id 的多筆 assignment 必須各自保留獨立 id、日期區段、planned_hours 與 actual_hours；不得依月嫂去重、合併跨區段工時或改用 orders.staff_id 建立單一選項。
+  - 本節點不得讀取或回傳 staff_schedule、assignment_id=NULL 的 legacy 排班或其他案件資料。
+  - 唯讀：所有 SQL 必須為 SELECT，不得使用 FOR UPDATE、commit、rollback，connection 在成功與錯誤路徑都必須關閉。
+  - 測試必須使用 query-aware／stateful fixture，同時放入相同 staff_id 的兩個不連續 active assignment、同一目標 case_no 的 cancelled assignment、另一案件與 assignment_id=NULL 的 legacy schedule；查詢目標案件時須正常成功，只回傳該案件兩個 active assignment，並斷言各自 planned_hours／actual_hours 未合併。
+  - cancelled decoy 必須存在於目標 case 的原始 assignment 資料集合，query-aware cursor 必須依實際 SQL predicate 模擬 `case_no` 與 `status <> 'cancelled'` 篩選；不得預先把 cancelled 列放進永遠不會被查詢的獨立 key。若移除 cancelled predicate，該測試必須因 cancelled row 混入而失敗。
+  - 測試另須覆蓋 trim 後 case_no 查詢參數、穩定排序、空結果、錯誤 case／id／staff／日期列 fail-closed，以及所有路徑零寫入、零 transaction boundary 與 connection close。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_case_assignment_list.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
@@ -668,7 +1958,7 @@
 - State: `planned`
 - Source: services/actual_hours_adjustment_confirmation_service.py::adjust_actual_hours_before_payment,validate_case_actual_hours_for_payment
 - Dependencies: [PaymentSchema, MultiCaregiverScheduleSchema, StaffMonthlySettlementSchema, StaffMonthlySettlementDetailSchema]
-- Description: 在薪資確認前，針對明確指定的正式服務指派以十進位數值覆寫 `actual_hours`、附加不可覆寫的稽核紀錄，並驗證同一訂單全部未取消指派的實際時數總和精確等於訂單總服務時數；此節點不建立應付款。
+- Description: 歷史相容的例外人工時數覆寫與稽核服務；針對明確正式指派覆寫 `actual_hours` 後驗證全案守恆。現行多月嫂排班 UX 不以此服務建立獨立薪資確認時間點，也不以人工覆寫取代 assignment-owned 排班。
 - Complexity: medium
 - Input:
   - case_no: 管理端明確指定、用以鎖定單一訂單的 canonical case number
@@ -692,7 +1982,7 @@
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_actual_hours_adjustment_confirmation_service.py", "-q", "-p", "no:cacheprovider", "--basetemp", "C:\\tmp\\pytest-actual-hours-adjustment-confirmation"], "cwd": "project", "timeout": 120, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Non Goals:
-  - 不新增薪資確認 API、管理端 UI、應付款或月結；後續付款建立節點必須自行呼叫本服務的確認驗證，方可將 can_confirm=true 視為薪資確認門檻。
+  - 不新增薪資確認 API、管理端 UI、確認按鈕或確認時間；後續付款／月結建立節點從最新正式 assignment-owned 排班自動重算，不得等待本服務的人工作業。
   - 不從每日排班重算或推測人工例外時數；後續排班重算節點必須偵測既有人工覆寫，且不得靜默覆寫。
 - Observability: not_required
 
@@ -753,13 +2043,35 @@
 - Sub Map: root
 - Type: internal_helper
 - State: `planned`
-- Source: services/multi_caregiver_schedule_read.py::_validate_assignment_id,_validate_case_no
+- Source: services/multi_caregiver_schedule_read.py::_validate_assignment_id,_validate_case_no,_as_date,_validate_case_assignment
 - Dependencies: [MultiCaregiverScheduleReadService, MultiCaregiverCaseAssignmentListService]
-- Description: 多月嫂排班唯讀服務的檔案內部識別值驗證輔助函式集合，不構成對外服務介面。
+- Description: 多月嫂排班唯讀服務的檔案內部識別值、日期與 assignment-row 驗證輔助函式集合，不構成對外服務介面。
+- Complexity: low
+- Input:
+  - assignment_id: 呼叫端明確提供的正式 assignment id
+  - case_no: 呼叫端明確提供的案件編號
+  - date_value: DB 回傳的 date、datetime 或 ISO YYYY-MM-DD 字串
+  - assignment_row: case assignment list query 回傳的單筆 dict
+  - expected_case_no: 已正規化的目標案件編號
+- Output:
+  - validated_assignment_id: 正整數 assignment id
+  - normalized_case_no: trim 後非空案件編號
+  - normalized_date: 不含時間的 date
+  - validated_assignment_row: 已核對 ownership、狀態、日期與 assignment 級工時欄位的 assignment row
+- Algorithm:
+  - `_validate_assignment_id` 拒絕 bool、非 int 與小於 1 的值；`_validate_case_no` 只接受 trim 後非空字串。
+  - `_as_date` 將 datetime 取 date、保留 date、解析 ISO YYYY-MM-DD；其他型別與無效日期統一以 ValueError fail-closed。
+  - `_validate_case_assignment` 驗證輸入為 dict、id／staff_id 為正整數、case_no 精確等於 expected_case_no、status 非 cancelled、planned_hours／actual_hours 欄位存在，並以 `_as_date` 驗證完整且起日不晚於迄日的服務區段。
 - Invariants:
-  - 僅驗證呼叫端明確提供的 assignment_id 或 case_no，不得推測、查找或寫入任何正式指派。
+  - 僅驗證呼叫端或 DB row 已明確提供的值；不得依 orders.staff_id、姓名、日期相似性推測 assignment、case 或 staff。
+  - 四個 helper 都必須是 DB-free 的同步驗證／正規化函式；不得呼叫 get_connection、執行 SQL、commit、rollback、讀寫排班或薪資資料。
+  - assignment_id／staff_id 的 bool 必須視為無效，不得因 bool 是 int 子類而通過。
+  - date_value 只接受 date、datetime 與恰為十字元 `YYYY-MM-DD` 的字串；字串必須以 `[0-9]{4}-[0-9]{2}-[0-9]{2}` 或具同等 ASCII 限制的正則完整匹配後才可呼叫 date.fromisoformat，不得只用未啟用 ASCII flag 的 `\d`。不得接受 Python date.fromisoformat 額外支援的 basic ISO `YYYYMMDD`、ISO week date（例如 `2026-W28-5`）、Unicode／全形數字、前後空白、timestamp number、空字串或其他日期格式。
+  - assignment-row 驗證不得分組、去重、合併 planned_hours／actual_hours 或改寫 assignment_id、case_no、staff_id 與工時值；日期可正規化為 date。
+  - 所有無效輸入必須以明確 ValueError fail-closed，不得洩漏 AttributeError、TypeError 或回傳 falsey sentinel 讓呼叫端誤判成功。
+  - 直接 helper 測試必須覆蓋 bool／型別邊界、case trim、date／datetime／YYYY-MM-DD 正規化，以及 `YYYYMMDD`、ISO week date、Unicode／全形數字、前後空白、含時間字串與其他非法格式的拒絕；另須覆蓋非 dict row、錯誤 ownership、cancelled、缺工時、缺日期與日期反轉，並 monkeypatch get_connection 為立即失敗以證明 helpers 不碰 DB。
 - Verification:
-  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_read.py", "tests\\test_multi_caregiver_case_assignment_list.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
+  - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_read_internal_helpers.py", "tests\\test_multi_caregiver_schedule_read.py", "tests\\test_multi_caregiver_case_assignment_list.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Observability: not_required
 
 ##### Module: OrderAssignmentChangeAuditSchema
@@ -795,7 +2107,7 @@
 - State: `planned`
 - Source: services/order_assignment_synchronization.py::preview_order_assignment_sync
 - Dependencies: [PaymentSchema, MultiCaregiverScheduleSchema, MultiCaregiverAssignmentRules, ActualHoursAdjustmentConfirmationService]
-- Description: 唯讀檢視訂單服務天數、每日時數與服務日期變更，以及管理者明確提交的完整目標正式月嫂指派計畫；回傳時數差額、assignment-owned 日排班影響、必須明確確認移除的排班列，以及所有帳務、月結、人工時數覆寫或日期衝突的阻擋原因。
+- Description: 唯讀檢視訂單服務天數、每日時數與服務日期變更，以及管理者明確提交的完整目標正式月嫂指派計畫；回傳時數差額、assignment-owned 日排班影響、必須明確確認移除的排班列，以及所有帳務、月結、人工時數覆寫或日期衝突的阻擋原因。live code 對資料庫既有 actual dates 為 NULL 的歷史訂單，以 planned start/end 作 before 基準，但提議 order_change 仍要求完整有效日期；未來且尚無 case_staff_assignments 的 legacy 案件可 Preview 第一份完整正式配置。
 - Complexity: medium
 - Input:
   - case_no: 明確指定的 canonical case number
@@ -808,12 +2120,16 @@
   - preview 依 case_no 讀取 clients.identity_status 供計價與驗證；不得接受、推測或覆寫任何身分資格值。
   - 對所有會新增、變更、取消或重建的正式指派檢查非 cancelled staff_payments、有效月結明細與 actual_hours_adjustments；任何受影響指派鎖定或有人工時數覆寫時回傳 locked 或 requires_review，不得部分套用。
   - 列出因取消指派、日期區段縮短或變更而必須移除的 assignment-owned staff_schedule id；legacy assignment_id 為 NULL 列只能回傳 requires_review，不得列入可移除清單。
+  - [目前代碼規格：event-only lineage] `case_staff_assignments` 刻意不保存 kind、original_assignment_id、substitution_work_date；正式 segment 送入 Rules 時投影為 kind=formal、兩個 lineage 欄位為 null。代班／順延 lineage 的唯一 canonical 來源是 append-only leave/substitution batch 與逐日 event，不建立第二套 assignment lineage 欄位。
 - Invariants:
   - 未提供完整明確 assignment_plan 時只能回傳 requires_allocation，絕不得猜測哪位月嫂或哪個區段應增減；未列出的既有有效指派只能作為明確取消候選檢查，不得靜默忽略。
+  - 現況 assignment_plan 為空不等於缺漏：對尚無任何正式 assignment 的未來案件，管理者明確提交的完整 proposed plan 必須可作首次配置 Preview；orders.staff_id 僅可由 UI 用作候選預填，不得由 Service 推測或採用。
+  - 提議區段依月嫂每週休假生成的 actual_hours 低於或高於訂單目標時數時，Preview 回傳 requires_allocation、目標／實際／差額且不偽裝成 ownership conflict；UI 不得提供 Apply。Apply 必須重新計算並拒絕不守恆；成功排班直接供薪資自動計算，應付款／月結建立時再從最新正式資料重算。
   - preview 必須唯讀；不得新增、修改或取消訂單、正式指派、日排班、稽核、薪資、月結或人工時數覆寫。
   - 已有非 cancelled staff_payments、有效月結明細或 actual_hours_adjustments 的受影響指派不得重排、取消、改日期或改算 actual_hours；必須回傳具體鎖定／人工覆寫原因。
   - legacy assignment_id 為 NULL 排班只可作為衝突／人工覆核原因，不得被採用、修改或覆寫。
-  - 身分資格只能讀取 clients.identity_status；不得讀取 clients.identity_status 或接受客戶傳入的 identity_status。
+  - 身分資格只能由 case_no join clients.identity_status 讀取；不得讀取已移除的 orders.identity_status，也不得接受客戶傳入的 identity_status。
+  - 資料庫既有 actual_start_date 或 actual_end_date 為 NULL 時，before transition 必須分別使用 start_date／end_date；若提議值等於 planned fallback，仍視為欄位變更，確保 Apply 能補齊 actual dates。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_order_assignment_synchronization.py", "-k", "preview", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Non Goals:
@@ -842,8 +2158,9 @@
   - 僅在所有驗證通過後，刪除明確列出的受影響 assignment-owned 排班列，在同一 transaction 更新訂單服務欄位與可編輯訂單主資料、同步該 case_no 的客戶姓名，建立或更新明確正式指派，取消完整目標計畫中未列出且未鎖定的指派，並以交易內生成器補足受影響有效指派的新日期排班；不得變更 clients.identity_status、其他案件或 legacy 排班。
   - 觸發點 2（收清後完工）：更新 actual_end_date 時，若該案 client_payments 已為滿額收款 (amount_received == amount_receivable) 且未啟用義務，透過 AccountingSourceProjection 與 OrderAmountCalculator 計算 subsidy_return_amount，若大於零且身分資格支援，於同一個 transaction 內呼叫 ClientSubsidyReturnObligationService (activate_subsidy_return_obligation) 啟用補助退還義務。
   - 投影、計算或義務啟用發生非業務預期錯誤時必須拋出並由外層 rollback；不得吞掉例外後提交已完工但未建立義務的部分結果。
-  - 以 ActualHoursAdjustmentConfirmationService 的同等 Decimal 確認邏輯驗證所有未取消指派 actual_hours 總和恰等於 orders.service_days × orders.service_hours_per_day；不相等即 rollback。
+  - 以 Decimal 驗證所有未取消指派 actual_hours 總和恰等於訂單計畫時數（orders.service_days × orders.service_hours_per_day）；不相等即 rollback。此處是 Apply 寫入防線，不是人工薪資確認階段。
   - 同一交易最後新增 OrderAssignmentChangeAuditSchema 稽核快照並 commit，回傳已套用結果；任何例外均 rollback。
+  - [目前代碼規格：event-only lineage] segment reconfigure 只處理 formal assignment，送入 Rules 時投影 kind=formal 且 lineage 為 null；代班建立與 lineage 只由 append-only leave/substitution batch/event 流程處理。
 - Invariants:
   - 未提供完整明確 assignment_plan 或完整 schedule_change_plan 時只能回傳 requires_allocation，絕不得猜測哪位月嫂、哪個區段或哪一筆日排班應增減或移除。
   - apply 必須全有或全無，不得在訂單已更新而指派、日排班、確認或稽核失敗時 commit。
@@ -854,8 +2171,9 @@
   - 當完工流程寫入/更新 actual_end_date 時，若案件已滿額收款且未啟用義務，必須在同一 transaction 內觸發 activate_subsidy_return_obligation。
   - 觸發點 2 必須使用 AccountingSourceProjection 的 transaction cursor 版本；任何非明確 review_required 結果的錯誤都必須 rollback 整個 apply。
   - 不建立、修改或取消 staff_payments、staff_monthly_settlements、轉帳或其明細；既有財務資料只能作為鎖定依據。
-  - 身分資格只能讀取 clients.identity_status；不得讀寫 clients.identity_status 或修改 clients.identity_status。
+  - 身分資格只能由 case_no join clients.identity_status 讀取；不得寫入或修改 clients.identity_status，也不得接受客戶傳入的 identity_status。
   - 每次成功 apply 必須新增一筆 OrderAssignmentChangeAuditSchema 稽核列；失敗或拒絕不得新增稽核列。
+  - 既有 actual dates 為 NULL 時，重算 before transition 使用 planned dates；Apply 成功後依完整 order_change 寫回 actual_start_date／actual_end_date。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_order_assignment_synchronization.py", "-k", "apply", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}
 - Non Goals:
@@ -867,7 +2185,7 @@
 - Sub Map: root
 - Type: internal_helper
 - State: `planned`
-- Source: services/order_assignment_synchronization.py::_required_text,_decimal,_date,_weekly_rest_days,_normalise_order_change,_normalise_apply_order_change,_normalise_assignment_plan,_fetchall,_blocking_assignments,_working_days,_status_for,_current_actual_hours,_deduplicate_reasons,_normalise_schedule_change_plan,_snapshot
+- Source: services/order_assignment_synchronization.py::_required_text,_decimal,_date,_weekly_rest_days,_normalise_order_change,_normalise_apply_order_change,_normalise_assignment_plan,_order_field_changed,_fetchall,_blocking_assignments,_working_days,_status_for,_current_actual_hours,_deduplicate_reasons,_normalise_schedule_change_plan,_snapshot
 - Dependencies: [OrderAssignmentSynchronizationPreviewService, OrderAssignmentSynchronizationApplyService]
 - Description: 訂單與正式指派同步服務的檔案內部正規化、查詢、鎖定判斷、狀態計算與快照輔助函式集合，不構成對外服務介面。
 - Invariants:
@@ -921,7 +2239,7 @@
 - Invariants:
   - 不接受 client 提供的 case_no、staff_id、actual_hours 或 planned_hours；身分與時數由正式指派服務層決定。
   - 不呼叫 legacy db_service.update_schedule_day、save_order_rest_dates 或 generate_default_schedule。
-  - 不提供同日分時段、薪資手動時數覆寫、薪資確認或多月嫂時數總和確認端點。
+  - 不提供同日分時段、薪資手動時數覆寫、人工薪資確認或獨立多月嫂時數確認端點；多月嫂總時數守恆由調整 service 本身在同一 transaction 強制執行。
   - 路由只編排輸入與錯誤回應，不直接執行 SQL。
 - Verification:
   - command: {"argv": [".venv\\Scripts\\python.exe", "-m", "pytest", "tests\\test_multi_caregiver_schedule_router.py", "-q", "-p", "no:cacheprovider"], "cwd": "project", "timeout": 60, "expect_exit": 0, "expect_stdout_contains": "passed"}

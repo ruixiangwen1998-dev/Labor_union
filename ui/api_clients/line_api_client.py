@@ -13,6 +13,7 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
+from ui.pages.shared import resolve_api_base_url, resolve_internal_api_key
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -27,12 +28,14 @@ class LineAdminApiError(RuntimeError):
 
 class LineAdminApiClient:
     def __init__(self) -> None:
-        self.base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
-        self.internal_api_key = os.getenv("INTERNAL_API_KEY", "").strip()
+        pass
 
     @property
     def configured(self) -> bool:
-        return bool(self.internal_api_key)
+        try:
+            return bool(resolve_internal_api_key())
+        except RuntimeError:
+            return False
 
     @property
     def admin_auth_bypassed(self) -> bool:
@@ -45,6 +48,12 @@ class LineAdminApiClient:
             "off",
         }
 
+    def _request_headers(self, token: str | None) -> dict[str, str]:
+        headers = {"X-Internal-API-Key": resolve_internal_api_key()}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
     def _request(
         self,
         method: str,
@@ -55,15 +64,13 @@ class LineAdminApiClient:
         extra_headers: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        headers = {"X-Internal-API-Key": self.internal_api_key}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        headers = self._request_headers(token)
         if extra_headers:
             headers.update(extra_headers)
         try:
             response = requests.request(
                 method,
-                f"{self.base_url}{path}",
+                f"{resolve_api_base_url()}{path}",
                 headers=headers,
                 json=json,
                 params=params,
@@ -91,13 +98,11 @@ class LineAdminApiClient:
         token: str | None = None,
         json: dict[str, Any] | None = None,
     ) -> bytes:
-        headers = {"X-Internal-API-Key": self.internal_api_key}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        headers = self._request_headers(token)
         try:
             response = requests.request(
                 method,
-                f"{self.base_url}{path}",
+                f"{resolve_api_base_url()}{path}",
                 headers=headers,
                 json=json,
                 timeout=15,
@@ -295,12 +300,10 @@ class LineAdminApiClient:
         content: bytes,
         content_type: str,
     ) -> dict[str, Any]:
-        headers = {"X-Internal-API-Key": self.internal_api_key}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        headers = self._request_headers(token)
         try:
             response = requests.post(
-                f"{self.base_url}/api/v1/line/rich-menus/{menu_id}/images",
+                f"{resolve_api_base_url()}/api/v1/line/rich-menus/{menu_id}/images",
                 headers=headers,
                 files={"image": (filename, content, content_type)},
                 timeout=30,

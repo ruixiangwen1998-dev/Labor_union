@@ -21,13 +21,18 @@ class Cursor:
         self.calls.append((compact, params))
         if self.fail_on and self.fail_on in compact:
             raise RuntimeError("injected insert failure")
-        if compact.startswith("SELECT COUNT(*) AS existing_cnt FROM staff"):
+        if compact.startswith("SELECT name FROM staff WHERE identity_card"):
             self.current_identity_card = params[0]
         if compact.startswith("INSERT INTO staff"):
             self.lastrowid += 1
 
     def fetchone(self):
         return (1,) if self.current_identity_card in self.existing_identity_cards else (0,)
+
+    def fetchall(self):
+        if self.current_identity_card in self.existing_identity_cards:
+            return [{"name": "existing"}]
+        return []
 
 
 class Connection:
@@ -64,6 +69,10 @@ def _patch_import(monkeypatch, frame, connection):
     monkeypatch.setattr(staff_importer.os.path, "exists", lambda _path: True)
     monkeypatch.setattr(staff_importer.pd, "ExcelFile", lambda _path: Workbook(frame))
     monkeypatch.setattr(staff_importer.pymysql, "connect", lambda **_kwargs: connection)
+    # Alert persistence is intentionally isolated from these insert-only tests.
+    monkeypatch.setattr(staff_importer, "upsert_system_alert", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(staff_importer, "resolve_if_exists", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(staff_importer, "delete_system_alert", lambda *_args, **_kwargs: False)
 
 
 def test_mixed_rows_only_insert_new_identity_card(monkeypatch):
@@ -79,7 +88,9 @@ def test_mixed_rows_only_insert_new_identity_card(monkeypatch):
     result = staff_importer.process_import("staff.xlsx")
     statements = [sql for sql, _ in cursor.calls]
 
-    assert result == {"inserted": 1, "skipped_existing": 1, "review_required": 1, "failed": 0}
+    # The minimal new row is inserted and separately marked for field review;
+    # the row without an identity card is also review-required.
+    assert result == {"inserted": 1, "skipped_existing": 1, "review_required": 2, "failed": 0}
     assert not any(sql.startswith("UPDATE") for sql in statements)
     assert sum(sql.startswith("INSERT INTO staff") for sql in statements) == 1
     delete_calls = [params for sql, params in cursor.calls if sql.startswith("DELETE FROM")]

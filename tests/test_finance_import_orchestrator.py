@@ -80,11 +80,43 @@ def test_pipeline_dispatches_only_inserted_rows_and_completes_batch(monkeypatch)
 
     assert dispatched == [10, 12]
     assert result == {
+        "mode": "apply",
+        "source_path": str(importer.os.path.abspath("renamed.xlsx")),
+        "format_manifest": {
+            "format_id": "sinopac",
+            "sheet_name": None,
+            "header_row": None,
+            "normalized_row_count": 1,
+        },
         "batch_id": 41,
         "inserted_rows": 2,
         "skipped_existing": 1,
         "reconciled_counts": {"client_receipt": 1},
         "pending_rows": [12],
+        "row_results": [
+            {
+                "dedup_fingerprint": None,
+                "classification_type": "client_receipt",
+                "staging_result": "inserted",
+                "dispatch_result": "reconciled",
+                "reason": None,
+            },
+            {
+                "dedup_fingerprint": None,
+                "classification_type": "client_receipt",
+                "staging_result": "skipped_existing",
+                "dispatch_result": None,
+                "reason": None,
+            },
+            {
+                "dedup_fingerprint": None,
+                "classification_type": "non_business_review",
+                "staging_result": "inserted",
+                "dispatch_result": "pending",
+                "reason": None,
+            },
+        ],
+        "transaction_outcome": "committed",
     }
     assert connection.commits == 1
     assert connection.rollbacks == 0
@@ -207,6 +239,31 @@ def test_staff_plan_keeps_ambiguous_same_amount_settlements_pending(monkeypatch)
 
     assert result == {"result": "pending", "reason": "staff_transfer_plan_not_unique"}
     assert called == []
+
+
+def test_non_business_dispatch_preserves_classifier_reason(monkeypatch):
+    monkeypatch.setattr(
+        importer,
+        "_load_dispatch_row",
+        lambda cursor, row_id: {
+            "id": row_id,
+            "classification_reason": "sinopac_staff_account_no_match",
+        },
+    )
+
+    result = importer._dispatch_inserted_row(
+        Cursor(),
+        {
+            "row_id": 31,
+            "classification_type": "non_business_review",
+            "result": "inserted",
+        },
+    )
+
+    assert result == {
+        "result": "pending",
+        "reason": "sinopac_staff_account_no_match",
+    }
 
 
 def test_second_subsidy_requires_confirmed_full_legacy_component():

@@ -9,6 +9,8 @@ PARENT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 if PARENT_DIR not in sys.path:
     sys.path.append(PARENT_DIR)
 
+from ui.nav_helper import NAV_KEY, apply_pending_navigation
+
 st.set_page_config(page_title="Lobar Union 管理系統", layout="wide")
 
 # 鎖定在同目錄下的 pages 資料夾
@@ -42,8 +44,12 @@ def main():
         st.warning("請在 `ui/pages/` 目錄下新增頁面模組。")
         return
         
-    choice = st.sidebar.radio("前往頁面", list(pages.keys()))
-    
+    page_titles = list(pages.keys())
+    apply_pending_navigation()
+    if NAV_KEY not in st.session_state or st.session_state[NAV_KEY] not in page_titles:
+        st.session_state[NAV_KEY] = page_titles[0]
+    choice = st.sidebar.radio("前往頁面", page_titles, key=NAV_KEY)
+
     # 執行該分頁的 show()
     pages[choice]()
 

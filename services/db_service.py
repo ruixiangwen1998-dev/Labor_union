@@ -567,7 +567,30 @@ def get_order_details() -> list[dict]:
 
             cursor.execute("SELECT * FROM v_order_details")
             rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT csa.case_no,
+                       GROUP_CONCAT(
+                           s.name ORDER BY csa.assignment_sequence
+                           SEPARATOR '、'
+                       ) AS assignment_staff_names
+                  FROM case_staff_assignments csa
+                  JOIN staff s ON s.id = csa.staff_id
+                 WHERE csa.status <> 'cancelled'
+                 GROUP BY csa.case_no
+                """
+            )
+            assignment_staff_names = {
+                str(row["case_no"]): row.get("assignment_staff_names")
+                for row in (cursor.fetchall() or [])
+                if row.get("case_no")
+            }
             for r in rows:
+                assignment_names = assignment_staff_names.get(
+                    str(r.get("case_no") or "")
+                )
+                if assignment_names:
+                    r["staff_name"] = assignment_names
                 r['notes'] = r.get('notes') or r.get('special_needs') or ""
                 def to_str_date(val):
                     if not val:
@@ -835,34 +858,11 @@ def update_order_status(case_no: str, status: str, cancel_reason: str = None) ->
         conn.close()
 
 def update_order_full_details(case_no: str, data: dict) -> bool:
-    """更新 orders 主資料表全量欄位（天數、時數、樓層費與日期）。"""
+    """更新不影響正式 assignment／schedule 的訂單基本資料。"""
     case_no = _resolve_case_no(case_no)
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE orders 
-                SET service_days = %s,
-                    service_hours_per_day = %s,
-                    floor_fee = %s,
-                    start_date = %s,
-                    actual_start_date = %s,
-                    end_date = %s,
-                    actual_end_date = %s,
-                    deposit_date = %s
-                WHERE case_no = %s
-            """, (
-                data.get('service_days'),
-                data.get('service_hours_per_day'),
-                data.get('floor_fee'),
-                data.get('start_date'),
-                data.get('actual_start_date'),
-                data.get('end_date'),
-                data.get('actual_end_date'),
-                data.get('deposit_date'),
-                case_no
-            ))
-            
             # 若 clients 姓名有修改，同步更新客戶主表 name
             if data.get('client_name'):
                 cursor.execute("""
@@ -871,8 +871,6 @@ def update_order_full_details(case_no: str, data: dict) -> bool:
                     WHERE c.case_no = %s
                 """, (data.get('client_name'), case_no))
 
-            sync_client_payment_due_dates_for_case_no(case_no, cursor=cursor)
-                
             conn.commit()
             return True
     except Exception as e:
@@ -883,7 +881,7 @@ def update_order_full_details(case_no: str, data: dict) -> bool:
 
 
 
-def add_or_update_holiday(holiday_date, holiday_name: str, is_double_pay_default: bool = True) -> bool:
+def add_or_update_holiday(holiday_date, holiday_name: str, is_double_pay_default: bool = False) -> bool:
     """新增或更新國定假日"""
     conn = get_connection()
     try:
@@ -1451,6 +1449,53 @@ def update_matching_info_sent(match_id: int, form_type: int) -> bool:
                 """, (match_id,))
             conn.commit()
             return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def mark_resume_sent(match_id: int) -> bool:
+    """記錄履歷已發送給客戶的時間。"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE matching_records
+                SET sent_resume_at = NOW()
+                WHERE id = %s
+            """, (match_id,))
+            conn.commit()
+            return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def mark_resume_sent_for_case(case_no: str) -> int | None:
+    """找出該案件中「已被接受但履歷尚未發送」的候選人紀錄並標記發送，回傳該紀錄 id；找不到則回傳 None。"""
+    case_no = _resolve_case_no(case_no)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT id FROM matching_records
+                WHERE case_no = %s AND caregiver_accepted = 1 AND sent_resume_at IS NULL
+                ORDER BY id
+                LIMIT 1
+            """, (case_no,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            match_id = row['id']
+            cursor.execute("""
+                UPDATE matching_records
+                SET sent_resume_at = NOW()
+                WHERE id = %s
+            """, (match_id,))
+            conn.commit()
+            return match_id
     except Exception as e:
         conn.rollback()
         raise e

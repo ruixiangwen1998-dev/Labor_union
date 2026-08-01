@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from services.assignment_payroll_reconciliation_service import (
+    reconcile_assignment_payroll_with_cursor,
+)
 from services.db_service import get_connection
 from services.payment_rules import evaluate_payment_boundary
 
@@ -60,17 +63,59 @@ def create_staff_payment(assignment_id, due_date=None, adjustment_amount=0) -> i
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""SELECT case_no, staff_id, COALESCE(actual_hours, planned_hours) AS hours,
-                              hourly_rate, floor_fee_allocated FROM case_staff_assignments WHERE id = %s FOR UPDATE""", (assignment_id,))
+            cursor.execute(
+                """SELECT case_no FROM case_staff_assignments
+                   WHERE id = %s FOR UPDATE""",
+                (assignment_id,),
+            )
             assignment = cursor.fetchone()
-            if not assignment or assignment["hours"] is None or assignment["hourly_rate"] is None:
-                raise ValueError("assignment requires hours and hourly rate")
-            payable = calculate_staff_payable(assignment["hours"], assignment["hourly_rate"], assignment["floor_fee_allocated"], adjustment_amount)
+            if not assignment:
+                raise ValueError("assignment does not exist")
+            case_no = assignment["case_no"]
+            if not isinstance(case_no, str) or not case_no.strip():
+                raise ValueError("assignment requires a case_no")
+            case_no = case_no.strip()
+
+            reconciliation = reconcile_assignment_payroll_with_cursor(
+                cursor, case_no
+            )
+            if not reconciliation["can_create_staff_payments"]:
+                raise ValueError("assignment payroll reconciliation failed")
+
+            reconciled_assignment = next(
+                (
+                    item
+                    for item in reconciliation["assignments"]
+                    if item["assignment_id"] == assignment_id
+                ),
+                None,
+            )
+            if reconciled_assignment is None:
+                raise ValueError("assignment is not payable")
+
+            payable = calculate_staff_payable(
+                reconciled_assignment["actual_hours"]
+                + reconciled_assignment["double_pay_hours"],
+                reconciled_assignment["hourly_rate"],
+                reconciled_assignment["floor_fee_allocated"],
+                adjustment_amount,
+            )
             cursor.execute("""INSERT INTO staff_payments
                 (assignment_id, case_no, staff_id, service_hours, hourly_rate, service_salary,
                  floor_fee_amount, adjustment_amount, total_payable, due_date)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (assignment_id, assignment["case_no"], assignment["staff_id"], payable["service_hours"], payable["hourly_rate"], payable["service_salary"], payable["floor_fee_amount"], payable["adjustment_amount"], payable["total_payable"], due_date))
+                (
+                    assignment_id,
+                    case_no,
+                    reconciled_assignment["staff_id"],
+                    payable["service_hours"],
+                    payable["hourly_rate"],
+                    payable["service_salary"],
+                    payable["floor_fee_amount"],
+                    payable["adjustment_amount"],
+                    payable["total_payable"],
+                    due_date,
+                ))
             payment_id = cursor.lastrowid
         conn.commit()
         return payment_id

@@ -20,6 +20,22 @@ try:
 except Exception:
     pass
 
+# 讓 file_watcher.py 以子程序執行本檔時也能 import services 底下的模組
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
+from services.client_import_validation import (
+    EXCEL_TO_DB_COLUMN,
+    fallback_case_key,
+    validate_hcm_row,
+)
+from services.system_alert_service import (
+    delete_system_alert,
+    resolve_if_exists,
+    upsert_system_alert,
+)
+
 # 從專案根目錄的 .env 讀取資料庫連線設定 (若 .env 不存在或缺少某欄位，則回退為原本的預設值)
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
@@ -79,14 +95,14 @@ def clean_city_and_address(city_val, address_val):
     address = address.replace("臺", "台")
     
     if not city and len(address) >= 3:
-        for possible_city in ["台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市", "基隆市", "新竹市", "嘉義市", "新竹縣", "苗栗縣", "彰化縣", "南投縣", "雲林縣", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣", "澎湖縣"]:
+        for possible_city in ["台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市", "基隆市", "新竹市", "嘉義市", "新竹縣", "苗栗縣", "彰化縣", "南投縣", "雲林縣", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣", "澎湖縣", "金門縣", "連江縣"]:
             if address.startswith(possible_city):
                 city = possible_city
                 break
-    
+
     if city in ["台北", "新北", "桃園", "台中", "台南", "高雄"]:
         city = city + "市"
-    elif city in ["新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東", "澎湖"]:
+    elif city in ["新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東", "澎湖", "金門", "連江"]:
         city = city + "縣"
         
     return city, address
@@ -179,7 +195,7 @@ def process_import(excel_path):
     print(f"找到匹配工作表：'{target_sheet}'，共有 {len(df)} 筆資料，準備匯入...")
     
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = pymysql.connect(**DB_CONFIG, cursorclass=pymysql.cursors.DictCursor)
         cursor = conn.cursor()
         # 強制指定 utf8mb4 字元編碼以防止 ENUM 狀態機寫入中文時遭到截斷
         cursor.execute("SET NAMES utf8mb4;")
@@ -194,11 +210,14 @@ def process_import(excel_path):
     
     try:
         for _, row in df.iterrows():
+            raw_row = row.to_dict()
+            errors = validate_hcm_row(raw_row)
+
             record = {}
             for excel_col, db_col in CLIENTS_FIELD_MAPPING.items():
                 if excel_col in row:
                     record[db_col] = clean_data(row[excel_col], db_col)
-            
+
             # 欄位清理
             if 'phone' in record:
                 record['phone'] = clean_phone(record['phone'])
@@ -206,16 +225,35 @@ def process_import(excel_path):
                 clean_c, clean_a = clean_city_and_address(record.get('city'), record.get('address'))
                 record['city'] = clean_c
                 record['address'] = clean_a
-                
+
+            # 驗證失敗的欄位一律存 NULL，避免髒資料進 DB，同時保留原因供異常警示使用
+            for excel_col in errors:
+                db_col = EXCEL_TO_DB_COLUMN.get(excel_col)
+                if db_col and db_col in record:
+                    record[db_col] = None
+
+            name_for_alert = raw_row.get('姓名')
+            phone_for_alert = raw_row.get('行動電話')
+
             case_no = record.get('case_no')
             if not case_no:
                 review_required += 1
+                if errors:
+                    error_keys_joined = "、".join(errors.keys())
+                    upsert_system_alert(
+                        cursor,
+                        alert_code="IMPORT-001",
+                        source_domain="IMPORT",
+                        case_key=fallback_case_key(name_for_alert, phone_for_alert),
+                        reason=f"HCM 匯入資料異常（查無案號）：{error_keys_joined}",
+                        details=errors,
+                    )
                 continue
-                
+
             # 比對去重
             cursor.execute("SELECT id FROM clients WHERE case_no = %s", (case_no,))
             existing = cursor.fetchone()
-            
+
             if existing:
                 skipped_existing += 1
                 continue
@@ -226,7 +264,7 @@ def process_import(excel_path):
             cursor.execute(sql, tuple(record.values()))
             client_id = cursor.lastrowid
             inserted += 1
-                
+
             # 關聯訂單與生命週期狀態機初始化
             s_days = clean_data(record.get('service_days'), 'service_days') or 20
             s_time_raw = record.get('service_time') or "9"
@@ -248,7 +286,31 @@ def process_import(excel_path):
                 )
                 VALUES (%s, %s, '洽談中', %s, %s, %s, %s)
             """, (case_no, client_id, s_days, s_hours, start_date, end_date))
-                
+
+            # 有案號了：若先前用 error_姓名_電話 這個替代鍵記錄過，就把舊的清掉
+            fallback_key = fallback_case_key(name_for_alert, phone_for_alert)
+            if not fallback_key.startswith("error_row_"):
+                delete_system_alert(cursor, alert_code="IMPORT-001", case_key=fallback_key)
+
+            if errors:
+                review_required += 1
+                error_keys_joined = "、".join(errors.keys())
+                upsert_system_alert(
+                    cursor,
+                    alert_code="IMPORT-001",
+                    source_domain="IMPORT",
+                    case_key=case_no,
+                    reason=f"案件 {case_no} 匯入資料異常：{error_keys_joined}",
+                    details=errors,
+                )
+            else:
+                resolve_if_exists(
+                    cursor,
+                    alert_code="IMPORT-001",
+                    case_key=case_no,
+                    reason="系統重新匯入：欄位驗證通過，自動解除",
+                )
+
         conn.commit()
         print(f"匯入成功：新增 {inserted} 筆，略過既有 {skipped_existing} 筆，待確認 {review_required} 筆。")
     except Exception as err:

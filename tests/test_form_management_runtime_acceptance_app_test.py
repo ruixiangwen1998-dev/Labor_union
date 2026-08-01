@@ -37,7 +37,7 @@ def _run_form_page_with_mock_data(orders_data, clients=None):
         page.show()
 
     app = AppTest.from_function(_app)
-    app.run()
+    app.run(timeout=15)
     return app
 
 
@@ -48,7 +48,7 @@ def test_form_management_runtime_empty_data_and_rerun_are_stable():
     assert [title.value for title in app.title] == ["📋 表單與履歷問卷管理專區"]
     assert len(app.tabs) == 3
 
-    app.run()
+    app.run(timeout=15)
     assert not app.exception
     assert len(app.tabs) == 3
 

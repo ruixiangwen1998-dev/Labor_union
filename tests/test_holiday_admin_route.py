@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from api.dependencies import admin_auth
 from api.routes import holidays
+from api.schemas.holidays import HolidayCreateRequest
 from services import db_service
 from services.admin_auth_service import AdminPrincipal
 
@@ -90,3 +91,12 @@ def test_holiday_get_delegates_for_system_admin(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["data"][0]["holiday_name"] == "元旦"
+
+
+def test_holiday_request_defaults_to_no_automatic_double_pay():
+    request = HolidayCreateRequest(
+        holiday_date="2026-01-01",
+        holiday_name="元旦",
+    )
+
+    assert request.is_double_pay_default is False

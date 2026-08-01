@@ -183,6 +183,19 @@ def _normalise_assignment_plan(value: object) -> list[dict[str, Any]]:
     return sorted(normalised, key=lambda item: item["assignment_sequence"])
 
 
+def _order_field_changed(
+    stored_order: Mapping[str, Any],
+    proposed_change: Mapping[str, Any],
+    field: str,
+) -> bool:
+    stored_value = stored_order.get(field)
+    if stored_value is None:
+        return True
+    if field in {"service_days", "service_hours_per_day"}:
+        return _decimal(stored_value, field) != proposed_change[field]
+    return _date(stored_value, field) != proposed_change[field]
+
+
 def _fetchall(cursor: Any, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
     cursor.execute(sql, params)
     return list(cursor.fetchall() or [])
@@ -246,6 +259,10 @@ def preview_order_assignment_sync(
     case_no: str, order_change: dict[str, Any], assignment_plan: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Read order-change effects without writing or locking any business record."""
+    from services.multi_caregiver_assignment_rules import (
+        validate_assignment_plan_transition,
+    )
+
     normalised_case_no = _required_text(case_no, "case_no")
     change = _normalise_order_change(order_change)
     allowed_change_fields = {
@@ -273,10 +290,28 @@ def preview_order_assignment_sync(
     )
     plan = _normalise_assignment_plan(assignment_plan)
     target_hours = change["service_days"] * change["service_hours_per_day"]
+    if len(plan) > 4:
+        raise ValueError("assignment_plan cannot contain more than four active segments")
+    if plan and [item["assignment_sequence"] for item in plan] != list(
+        range(1, len(plan) + 1)
+    ):
+        raise ValueError("assignment_sequence must be contiguous starting at 1")
+    for item in plan:
+        if (
+            item["assigned_start_date"] < change["actual_start_date"]
+            or item["assigned_end_date"] > change["actual_end_date"]
+        ):
+            raise ValueError("assignment interval must stay within actual order dates")
 
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT CURRENT_DATE AS database_current_date")
+            current_date_row = cursor.fetchone()
+            database_current_date = _date(
+                None if current_date_row is None else current_date_row.get("database_current_date"),
+                "database_current_date",
+            )
             cursor.execute(
                 """SELECT o.case_no, o.service_days, o.service_hours_per_day,
                           o.start_date, o.end_date, o.actual_start_date, o.actual_end_date,
@@ -293,7 +328,7 @@ def preview_order_assignment_sync(
 
             existing_assignments = _fetchall(
                 cursor,
-                """SELECT id, staff_id, assignment_sequence, assigned_start_date,
+                """SELECT id, case_no, staff_id, assignment_sequence, assigned_start_date,
                           assigned_end_date, status, planned_hours, actual_hours
                      FROM case_staff_assignments WHERE case_no = %s ORDER BY assignment_sequence, id""",
                 (normalised_case_no,),
@@ -309,6 +344,7 @@ def preview_order_assignment_sync(
                     "proposed_actual_hours": Decimal("0"),
                     "difference": target_hours,
                     "schedule_impact": [],
+                    "required_schedule_removals": [],
                     "blocking_reasons": [{"code": "assignment_plan_required"}],
                     "sync_status": "requires_allocation",
                 }
@@ -319,6 +355,13 @@ def preview_order_assignment_sync(
                     blocking_reasons.append(
                         {"code": "assignment_not_in_case", "assignment_id": assignment_id}
                     )
+                elif (
+                    assignment_id is not None
+                    and existing_by_id[assignment_id].get("status") == "cancelled"
+                ):
+                    blocking_reasons.append(
+                        {"code": "cancelled_assignment_cannot_be_reused", "assignment_id": assignment_id}
+                    )
 
             plan_assignment_ids = [item["assignment_id"] for item in plan if item["assignment_id"] is not None]
             omitted_active_assignment_ids = [
@@ -326,10 +369,49 @@ def preview_order_assignment_sync(
                 for row in existing_assignments
                 if row.get("status") != "cancelled" and row["id"] not in plan_assignment_ids
             ]
+            changed_assignment_ids = []
+            for item in plan:
+                assignment_id = item["assignment_id"]
+                existing = existing_by_id.get(assignment_id)
+                if existing is None or existing.get("status") == "cancelled":
+                    continue
+                if (
+                    existing.get("staff_id") != item["staff_id"]
+                    or existing.get("assignment_sequence") != item["assignment_sequence"]
+                    or _date(existing.get("assigned_start_date"), "assigned_start_date")
+                    != item["assigned_start_date"]
+                    or _date(existing.get("assigned_end_date"), "assigned_end_date")
+                    != item["assigned_end_date"]
+                ):
+                    changed_assignment_ids.append(assignment_id)
+            assignment_affecting_order_change = any(
+                _order_field_changed(order, change, field)
+                for field in (
+                    "service_days",
+                    "service_hours_per_day",
+                    "start_date",
+                    "end_date",
+                    "actual_start_date",
+                    "actual_end_date",
+                )
+            )
+            order_affected_assignment_ids = (
+                [
+                    row["id"]
+                    for row in existing_assignments
+                    if row.get("status") != "cancelled"
+                ]
+                if assignment_affecting_order_change
+                else []
+            )
             affected_assignment_ids = sorted(
                 {
                     assignment_id
-                    for assignment_id in plan_assignment_ids + omitted_active_assignment_ids
+                    for assignment_id in (
+                        changed_assignment_ids
+                        + omitted_active_assignment_ids
+                        + order_affected_assignment_ids
+                    )
                     if assignment_id in existing_by_id
                 }
             )
@@ -337,6 +419,103 @@ def preview_order_assignment_sync(
             for assignment_id, reasons in blockers.items():
                 for reason in sorted(reasons):
                     blocking_reasons.append({"code": reason, "assignment_id": assignment_id})
+
+            current_rule_rows = [
+                {
+                    "id": row["id"],
+                    "case_no": normalised_case_no,
+                    "staff_id": row["staff_id"],
+                    "status": row.get("status", "planned"),
+                    "assigned_start_date": row.get("assigned_start_date"),
+                    "assigned_end_date": row.get("assigned_end_date"),
+                    "kind": row.get("kind") or "formal",
+                    "original_assignment_id": row.get("original_assignment_id"),
+                    "substitution_work_date": row.get("substitution_work_date"),
+                }
+                for row in existing_assignments
+            ]
+            proposed_rule_rows = []
+            for item in plan:
+                existing = existing_by_id.get(item["assignment_id"])
+                proposed_rule_rows.append(
+                    {
+                        "id": (
+                            item["assignment_id"]
+                            if item["assignment_id"] is not None
+                            else f"new-{item['assignment_sequence']}"
+                        ),
+                        "case_no": normalised_case_no,
+                        "staff_id": item["staff_id"],
+                        "status": (
+                            existing.get("status", "planned")
+                            if existing is not None
+                            else "planned"
+                        ),
+                        "assigned_start_date": item["assigned_start_date"],
+                        "assigned_end_date": item["assigned_end_date"],
+                        "kind": (
+                            existing.get("kind") or "formal"
+                            if existing is not None
+                            else "formal"
+                        ),
+                        "original_assignment_id": (
+                            existing.get("original_assignment_id")
+                            if existing is not None
+                            else None
+                        ),
+                        "substitution_work_date": (
+                            existing.get("substitution_work_date")
+                            if existing is not None
+                            else None
+                        ),
+                    }
+                )
+
+            transition_dates: list[date] = []
+            for item in plan:
+                existing = existing_by_id.get(item["assignment_id"])
+                if existing is None:
+                    transition_dates.append(item["assigned_start_date"])
+                elif _date(existing.get("assigned_end_date"), "assigned_end_date") != item["assigned_end_date"]:
+                    transition_dates.append(item["assigned_end_date"] + timedelta(days=1))
+            transition_dates.extend(
+                max(
+                    database_current_date,
+                    _date(
+                        existing_by_id[assignment_id].get("assigned_start_date"),
+                        "assigned_start_date",
+                    ),
+                )
+                for assignment_id in omitted_active_assignment_ids
+            )
+            effective_date = (
+                min(transition_dates)
+                if transition_dates
+                else max(change["actual_start_date"], database_current_date)
+            )
+            try:
+                validate_assignment_plan_transition(
+                    case_no=normalised_case_no,
+                    database_current_date=database_current_date,
+                    effective_date=effective_date,
+                    current_case_start_date=_date(
+                        order.get("actual_start_date") or order.get("start_date"),
+                        "current_actual_start_date",
+                    ),
+                    current_case_end_date=_date(
+                        order.get("actual_end_date") or order.get("end_date"),
+                        "current_actual_end_date",
+                    ),
+                    proposed_case_start_date=change["actual_start_date"],
+                    proposed_case_end_date=change["actual_end_date"],
+                    operation_kind="segment_reconfigure",
+                    current_assignments=current_rule_rows,
+                    proposed_assignments=proposed_rule_rows,
+                )
+            except ValueError as exc:
+                blocking_reasons.append(
+                    {"code": "assignment_plan_invalid", "detail": str(exc)}
+                )
 
             staff_ids = sorted({item["staff_id"] for item in plan})
             staff_rest_days: dict[int, set[int]] = {}
@@ -364,8 +543,6 @@ def preview_order_assignment_sync(
             candidate_rows: list[dict[str, Any]] = []
             for item in plan:
                 assignment_id = item["assignment_id"]
-                if assignment_id is not None and assignment_id in existing_by_id:
-                    candidate_rows.append(existing_by_id[assignment_id])
                 try:
                     validate_non_overlapping_assignment_interval(
                         item["assigned_start_date"],
@@ -426,6 +603,22 @@ def preview_order_assignment_sync(
                     }
                 )
 
+            legacy_schedule_rows = _fetchall(
+                cursor,
+                """SELECT id, case_no, assignment_id, work_date
+                     FROM staff_schedule
+                    WHERE case_no = %s AND assignment_id IS NULL""",
+                (normalised_case_no,),
+            )
+            for schedule in legacy_schedule_rows:
+                blocking_reasons.append(
+                    {
+                        "code": "legacy_schedule_requires_review",
+                        "schedule_id": schedule.get("id"),
+                        "assignment_id": None,
+                    }
+                )
+
             desired_by_assignment_id = {
                 item["assignment_id"]: item
                 for item in plan
@@ -458,13 +651,23 @@ def preview_order_assignment_sync(
                             or work_date > desired["assigned_end_date"]
                         )
                     if should_remove:
-                        required_schedule_removals.append(
-                            {
-                                "schedule_id": schedule.get("id"),
-                                "assignment_id": assignment_id,
-                                "work_date": schedule.get("work_date"),
-                            }
-                        )
+                        work_date = _date(schedule.get("work_date"), "work_date")
+                        if work_date < database_current_date:
+                            blocking_reasons.append(
+                                {
+                                    "code": "historical_schedule_immutable",
+                                    "schedule_id": schedule.get("id"),
+                                    "assignment_id": assignment_id,
+                                }
+                            )
+                        else:
+                            required_schedule_removals.append(
+                                {
+                                    "schedule_id": schedule.get("id"),
+                                    "assignment_id": assignment_id,
+                                    "work_date": schedule.get("work_date"),
+                                }
+                            )
 
             required_schedule_removals.sort(
                 key=lambda item: (item["work_date"], item["schedule_id"])
@@ -537,6 +740,10 @@ def apply_order_assignment_sync(
     applied_by: str,
 ) -> dict[str, Any]:
     """Atomically apply one explicitly confirmed order and caregiver-plan change."""
+    from services.multi_caregiver_assignment_rules import (
+        validate_assignment_plan_transition,
+    )
+
     normalised_case_no = _required_text(case_no, "case_no")
     operator = _required_text(applied_by, "applied_by")
     change = _normalise_apply_order_change(order_change)
@@ -554,6 +761,12 @@ def apply_order_assignment_sync(
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT CURRENT_DATE AS database_current_date")
+            current_date_row = cursor.fetchone()
+            database_current_date = _date(
+                None if current_date_row is None else current_date_row.get("database_current_date"),
+                "database_current_date",
+            )
             cursor.execute(
                 """SELECT o.case_no, o.service_days, o.service_hours_per_day,
                           o.floor_fee, o.deposit_date, o.start_date, o.end_date,
@@ -571,7 +784,7 @@ def apply_order_assignment_sync(
 
             existing_assignments = _fetchall(
                 cursor,
-                """SELECT id, staff_id, assignment_sequence, assigned_start_date,
+                """SELECT id, case_no, staff_id, assignment_sequence, assigned_start_date,
                           assigned_end_date, status, planned_hours, actual_hours
                      FROM case_staff_assignments
                     WHERE case_no = %s
@@ -593,7 +806,122 @@ def apply_order_assignment_sync(
                 for row in existing_assignments
                 if row.get("status") != "cancelled" and row["id"] not in plan_assignment_ids
             ]
-            affected_assignment_ids = sorted(set(plan_assignment_ids + omitted_active_assignment_ids))
+            current_rule_rows = [
+                {
+                    "id": row["id"],
+                    "case_no": normalised_case_no,
+                    "staff_id": row["staff_id"],
+                    "status": row.get("status", "planned"),
+                    "assigned_start_date": row.get("assigned_start_date"),
+                    "assigned_end_date": row.get("assigned_end_date"),
+                    "kind": row.get("kind") or "formal",
+                    "original_assignment_id": row.get("original_assignment_id"),
+                    "substitution_work_date": row.get("substitution_work_date"),
+                }
+                for row in existing_assignments
+            ]
+            proposed_rule_rows = []
+            for item in plan:
+                existing = existing_by_id.get(item["assignment_id"])
+                proposed_rule_rows.append(
+                    {
+                        "id": (
+                            item["assignment_id"]
+                            if item["assignment_id"] is not None
+                            else f"new-{item['assignment_sequence']}"
+                        ),
+                        "case_no": normalised_case_no,
+                        "staff_id": item["staff_id"],
+                        "status": (
+                            existing.get("status", "planned")
+                            if existing is not None
+                            else "planned"
+                        ),
+                        "assigned_start_date": item["assigned_start_date"],
+                        "assigned_end_date": item["assigned_end_date"],
+                        "kind": (
+                            existing.get("kind") or "formal"
+                            if existing is not None
+                            else "formal"
+                        ),
+                        "original_assignment_id": (
+                            existing.get("original_assignment_id")
+                            if existing is not None
+                            else None
+                        ),
+                        "substitution_work_date": (
+                            existing.get("substitution_work_date")
+                            if existing is not None
+                            else None
+                        ),
+                    }
+                )
+            transition_dates: list[date] = []
+            for item in plan:
+                existing = existing_by_id.get(item["assignment_id"])
+                if existing is None:
+                    transition_dates.append(item["assigned_start_date"])
+                elif _date(existing.get("assigned_end_date"), "assigned_end_date") != item["assigned_end_date"]:
+                    transition_dates.append(item["assigned_end_date"] + timedelta(days=1))
+            transition_dates.extend(
+                max(
+                    database_current_date,
+                    _date(
+                        existing_by_id[assignment_id].get("assigned_start_date"),
+                        "assigned_start_date",
+                    ),
+                )
+                for assignment_id in omitted_active_assignment_ids
+            )
+            effective_date = (
+                min(transition_dates)
+                if transition_dates
+                else max(change["actual_start_date"], database_current_date)
+            )
+            transition = validate_assignment_plan_transition(
+                case_no=normalised_case_no,
+                database_current_date=database_current_date,
+                effective_date=effective_date,
+                current_case_start_date=_date(
+                    order_before.get("actual_start_date")
+                    or order_before.get("start_date"),
+                    "current_actual_start_date",
+                ),
+                current_case_end_date=_date(
+                    order_before.get("actual_end_date")
+                    or order_before.get("end_date"),
+                    "current_actual_end_date",
+                ),
+                proposed_case_start_date=change["actual_start_date"],
+                proposed_case_end_date=change["actual_end_date"],
+                operation_kind="segment_reconfigure",
+                current_assignments=current_rule_rows,
+                proposed_assignments=proposed_rule_rows,
+            )
+            changed_existing_ids = {
+                item["before"]["id"]
+                for fact_name in ("truncated", "cancelled")
+                for item in transition[fact_name]
+                if item.get("before") is not None
+            }
+            assignment_affecting_order_change = any(
+                _order_field_changed(order_before, change, field)
+                for field in (
+                    "service_days",
+                    "service_hours_per_day",
+                    "start_date",
+                    "end_date",
+                    "actual_start_date",
+                    "actual_end_date",
+                )
+            )
+            if assignment_affecting_order_change:
+                changed_existing_ids.update(
+                    row["id"]
+                    for row in existing_assignments
+                    if row.get("status") != "cancelled"
+                )
+            affected_assignment_ids = sorted(changed_existing_ids)
             if affected_assignment_ids:
                 placeholders = ", ".join(["%s"] * len(affected_assignment_ids))
                 locking_queries = (
@@ -629,16 +957,95 @@ def apply_order_assignment_sync(
                         "blocking_reasons": _deduplicate_reasons(blocking_reasons),
                     }
 
+            submitted_schedule_blockers: list[dict[str, Any]] = []
+            if removal_ids:
+                placeholders = ", ".join(["%s"] * len(removal_ids))
+                submitted_schedules = _fetchall(
+                    cursor,
+                    f"""SELECT id, case_no, assignment_id, work_date
+                          FROM staff_schedule
+                         WHERE id IN ({placeholders}) FOR UPDATE""",
+                    tuple(removal_ids),
+                )
+                for schedule in submitted_schedules:
+                    assignment_id = schedule.get("assignment_id")
+                    if assignment_id is None:
+                        code = "legacy_schedule_requires_review"
+                    elif schedule.get("case_no") != normalised_case_no:
+                        code = "schedule_case_mismatch"
+                    elif assignment_id not in existing_by_id:
+                        code = "schedule_conflict"
+                    else:
+                        continue
+                    submitted_schedule_blockers.append(
+                        {
+                            "code": code,
+                            "schedule_id": schedule.get("id"),
+                            "assignment_id": assignment_id,
+                        }
+                    )
+            if submitted_schedule_blockers:
+                connection.rollback()
+                return {
+                    "case_no": normalised_case_no,
+                    "sync_status": "requires_review",
+                    "blocking_reasons": _deduplicate_reasons(
+                        submitted_schedule_blockers
+                    ),
+                }
+
+            legacy_schedules = _fetchall(
+                cursor,
+                """SELECT id, assignment_id, work_date FROM staff_schedule
+                    WHERE case_no = %s AND assignment_id IS NULL FOR UPDATE""",
+                (normalised_case_no,),
+            )
+            if legacy_schedules:
+                connection.rollback()
+                return {
+                    "case_no": normalised_case_no,
+                    "sync_status": "requires_review",
+                    "blocking_reasons": [
+                        {
+                            "code": "legacy_schedule_requires_review",
+                            "schedule_id": row.get("id"),
+                            "assignment_id": None,
+                        }
+                        for row in legacy_schedules
+                    ],
+                }
+
             staff_rest_days: dict[int, set[int]] = {}
-            for staff_id in sorted({item["staff_id"] for item in plan}):
+            for staff_id in sorted(
+                {item["staff_id"] for item in plan}
+                | {
+                    row["staff_id"]
+                    for row in existing_assignments
+                    if row.get("status") != "cancelled"
+                }
+            ):
                 cursor.execute("SELECT weekly_rest_days FROM staff WHERE id = %s FOR UPDATE", (staff_id,))
                 staff = cursor.fetchone()
                 if staff is None:
                     raise ValueError("assignment staff does not exist")
                 staff_rest_days[staff_id] = _weekly_rest_days(staff.get("weekly_rest_days"))
 
-            min_date = min(item["assigned_start_date"] for item in plan)
-            max_date = max(item["assigned_end_date"] for item in plan)
+            min_date = min(
+                [item["assigned_start_date"] for item in plan]
+                + [
+                    _date(row.get("assigned_start_date"), "assigned_start_date")
+                    for row in existing_assignments
+                    if row.get("status") != "cancelled"
+                ]
+            )
+            max_date = max(
+                [item["assigned_end_date"] for item in plan]
+                + [
+                    _date(row.get("assigned_end_date"), "assigned_end_date")
+                    for row in existing_assignments
+                    if row.get("status") != "cancelled"
+                ]
+            )
             holidays = {
                 _date(row["holiday_date"], "holiday_date")
                 for row in _fetchall(
@@ -648,26 +1055,8 @@ def apply_order_assignment_sync(
                 )
             }
 
-            candidate_rows: list[dict[str, Any]] = []
             plan_hours_by_sequence: dict[int, Decimal] = {}
             for item in plan:
-                assignment_id = item["assignment_id"]
-                if assignment_id is not None:
-                    candidate_rows.append(existing_by_id[assignment_id])
-                validate_non_overlapping_assignment_interval(
-                    item["assigned_start_date"],
-                    item["assigned_end_date"],
-                    candidate_rows,
-                    candidate_assignment_id=assignment_id,
-                )
-                candidate_rows.append(
-                    {
-                        "id": assignment_id,
-                        "status": "planned",
-                        "assigned_start_date": item["assigned_start_date"],
-                        "assigned_end_date": item["assigned_end_date"],
-                    }
-                )
                 plan_hours_by_sequence[item["assignment_sequence"]] = change["service_hours_per_day"] * _working_days(
                     item["assigned_start_date"],
                     item["assigned_end_date"],
@@ -681,6 +1070,14 @@ def apply_order_assignment_sync(
                 item["assignment_id"]: item for item in plan if item["assignment_id"] is not None
             }
             expected_removal_ids: set[int] = set()
+            removed_future_dates = {
+                date.fromisoformat(value) for value in transition["removed_future_dates"]
+            }
+            after_by_id = {
+                row["id"]: row
+                for row in transition["after_assignments"]
+                if isinstance(row["id"], int)
+            }
             if affected_assignment_ids:
                 placeholders = ", ".join(["%s"] * len(affected_assignment_ids))
                 schedule_rows = _fetchall(
@@ -695,16 +1092,29 @@ def apply_order_assignment_sync(
                     assignment_id = schedule["assignment_id"]
                     desired = desired_by_assignment_id.get(assignment_id)
                     existing_assignment = existing_by_id[assignment_id]
-                    if desired is None:
+                    work_date = _date(schedule["work_date"], "work_date")
+                    after_assignment = after_by_id.get(assignment_id)
+                    if work_date < database_current_date and (
+                        after_assignment is None
+                        or after_assignment.get("status") == "cancelled"
+                        or work_date < after_assignment["assigned_start_date"]
+                        or work_date > after_assignment["assigned_end_date"]
+                    ):
+                        raise ValueError("historical assignment-owned schedule cannot be removed")
+                    if work_date in removed_future_dates:
                         expected_removal_ids.add(schedule["id"])
-                    else:
-                        work_date = _date(schedule["work_date"], "work_date")
-                        if (
-                            existing_assignment["staff_id"] != desired["staff_id"]
-                            or work_date < desired["assigned_start_date"]
-                            or work_date > desired["assigned_end_date"]
-                        ):
-                            expected_removal_ids.add(schedule["id"])
+                    elif (
+                        after_assignment is None
+                        or after_assignment.get("status") == "cancelled"
+                        or work_date < after_assignment["assigned_start_date"]
+                        or work_date > after_assignment["assigned_end_date"]
+                    ):
+                        expected_removal_ids.add(schedule["id"])
+                    elif (
+                        desired is not None
+                        and existing_assignment["staff_id"] != desired["staff_id"]
+                    ):
+                        expected_removal_ids.add(schedule["id"])
             if set(removal_ids) != expected_removal_ids:
                 raise ValueError("remove_schedule_ids must exactly match required assignment-owned schedule removals")
 
@@ -742,15 +1152,6 @@ def apply_order_assignment_sync(
                 if cursor.rowcount != len(removal_ids):
                     raise ValueError("required assignment-owned schedules could not all be removed")
 
-            if omitted_active_assignment_ids:
-                placeholders = ", ".join(["%s"] * len(omitted_active_assignment_ids))
-                cursor.execute(
-                    f"UPDATE case_staff_assignments SET status = 'cancelled' WHERE id IN ({placeholders}) AND case_no = %s AND status <> 'cancelled'",
-                    (*omitted_active_assignment_ids, normalised_case_no),
-                )
-                if cursor.rowcount != len(omitted_active_assignment_ids):
-                    raise ValueError("omitted assignment could not be cancelled")
-
             temporary_sequence_base = max(
                 (int(row["assignment_sequence"]) for row in existing_assignments), default=0
             ) + len(plan) + 1
@@ -763,6 +1164,7 @@ def apply_order_assignment_sync(
                     raise ValueError("assignment could not be prepared for sequence update")
 
             resolved_plan: list[dict[str, Any]] = []
+            resolved_new_keys: dict[str, int] = {}
             for item in plan:
                 assignment_id = item["assignment_id"]
                 planned_hours = plan_hours_by_sequence[item["assignment_sequence"]]
@@ -778,7 +1180,9 @@ def apply_order_assignment_sync(
                         ),
                     )
                     assignment_id = cursor.lastrowid
+                    resolved_new_keys[f"new-{item['assignment_sequence']}"] = assignment_id
                 else:
+                    after_assignment = after_by_id[assignment_id]
                     cursor.execute(
                         """UPDATE case_staff_assignments
                               SET staff_id = %s, assignment_sequence = %s,
@@ -786,8 +1190,10 @@ def apply_order_assignment_sync(
                                   planned_hours = %s
                             WHERE id = %s AND case_no = %s AND status <> 'cancelled'""",
                         (
-                            item["staff_id"], item["assignment_sequence"],
-                            item["assigned_start_date"], item["assigned_end_date"], planned_hours,
+                            item["staff_id"],
+                            item["assignment_sequence"],
+                            item["assigned_start_date"],
+                            after_assignment["assigned_end_date"], planned_hours,
                             assignment_id, normalised_case_no,
                         ),
                     )
@@ -795,9 +1201,54 @@ def apply_order_assignment_sync(
                         raise ValueError("assignment could not be updated")
                 resolved_plan.append({**item, "assignment_id": assignment_id, "planned_hours": planned_hours})
 
+            planned_existing_ids = set(plan_assignment_ids)
+            for assignment_id, after_assignment in after_by_id.items():
+                if assignment_id in planned_existing_ids:
+                    continue
+                before_assignment = existing_by_id[assignment_id]
+                if after_assignment.get("status") == "cancelled":
+                    cursor.execute(
+                        """UPDATE case_staff_assignments
+                              SET status = 'cancelled'
+                            WHERE id = %s AND case_no = %s AND status <> 'cancelled'""",
+                        (assignment_id, normalised_case_no),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ValueError("omitted assignment could not be cancelled")
+                    continue
+                if after_assignment["assigned_end_date"] != before_assignment["assigned_end_date"]:
+                    planned_hours = change["service_hours_per_day"] * _working_days(
+                        after_assignment["assigned_start_date"],
+                        after_assignment["assigned_end_date"],
+                        staff_rest_days[after_assignment["staff_id"]],
+                        holidays,
+                    )
+                    cursor.execute(
+                        """UPDATE case_staff_assignments
+                              SET assigned_end_date = %s, planned_hours = %s
+                            WHERE id = %s AND case_no = %s AND status <> 'cancelled'""",
+                        (
+                            after_assignment["assigned_end_date"],
+                            planned_hours,
+                            assignment_id,
+                            normalised_case_no,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ValueError("omitted assignment could not be truncated")
+
+            regeneration_ids = set(resolved_new_keys.values())
+            regeneration_ids.update(
+                assignment_id
+                for assignment_id in affected_assignment_ids
+                if (
+                    assignment_id in after_by_id
+                    and after_by_id[assignment_id].get("status") != "cancelled"
+                )
+            )
             generated_schedules = [
-                generate_assignment_schedule_in_transaction(cursor, item["assignment_id"])
-                for item in resolved_plan
+                generate_assignment_schedule_in_transaction(cursor, assignment_id)
+                for assignment_id in sorted(regeneration_ids)
             ]
             cursor.execute(
                 """SELECT id AS assignment_id, staff_id, actual_hours
@@ -951,6 +1402,8 @@ def apply_order_assignment_sync(
                     _snapshot({"assignments": resolved_plan}), operator,
                 ),
             )
+            if cursor.rowcount != 1:
+                raise ValueError("assignment change audit could not be appended")
             audit_id = cursor.lastrowid
         connection.commit()
         return {

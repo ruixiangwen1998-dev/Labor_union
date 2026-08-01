@@ -28,6 +28,7 @@ from services.db_service import get_connection
 from services.client_receipt_reconciliation import reconcile_client_receipt
 from services.client_subsidy_return_transactions import record_client_subsidy_return
 from services.finance_identity_maps import load_finance_identity_maps
+from services.finance_alert_wiring import maybe_alert_pending
 from services.finance_import_staging import stage_finance_rows
 from services.government_subsidy_reconciliation import reconcile_government_subsidy
 from services.order_amount_calculator import calculate_order_amounts
@@ -317,7 +318,7 @@ def _identity_ids(value: Any) -> list[int] | None:
 def _load_dispatch_row(cursor: Any, row_id: int) -> Mapping[str, Any]:
     cursor.execute(
         """SELECT id, classification_type, matched_identity_ids,
-                  resolved_counterparty_account, debit
+                  resolved_counterparty_account, classification_reason, debit
            FROM finance_import_rows WHERE id=%s FOR UPDATE""",
         (row_id,),
     )
@@ -488,12 +489,19 @@ def _dispatch_inserted_row(cursor: Any, staged_row: Mapping[str, Any]) -> dict[s
             plan["payment_phase"],
             plan["allocations"],
         )
-    return {"result": "pending", "reason": "non_business_review"}
+    row = _load_dispatch_row(cursor, row_id)
+    return {
+        "result": "pending",
+        "reason": row.get("classification_reason") or "non_business_review",
+    }
 
 
-def import_finance_workbook(excel_path: str) -> dict[str, Any]:
-    """Normalize, append-only stage, and reconcile one workbook atomically."""
-    normalized_result = normalize_workbook(excel_path)
+def import_finance_workbook(excel_path: str, *, dry_run: bool = False) -> dict[str, Any]:
+    """Normalize, stage, and reconcile one workbook; optionally roll everything back."""
+    if not isinstance(dry_run, bool):
+        raise TypeError("dry_run must be a boolean")
+    source_path = os.path.abspath(excel_path)
+    normalized_result = normalize_workbook(source_path)
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -503,20 +511,39 @@ def import_finance_workbook(excel_path: str) -> dict[str, Any]:
             skipped_existing = 0
             pending_rows: list[int] = []
             reconciled_counts: dict[str, int] = {}
+            row_results: list[dict[str, Any]] = []
             for staged_row in staging["staged_rows"]:
+                classification_type = str(staged_row.get("classification_type"))
+                row_manifest = {
+                    "dedup_fingerprint": staged_row.get("dedup_fingerprint"),
+                    "classification_type": classification_type,
+                    "staging_result": staged_row.get("result"),
+                    "dispatch_result": None,
+                    "reason": None,
+                }
                 if staged_row.get("result") == "skipped_existing":
                     skipped_existing += 1
+                    row_results.append(row_manifest)
                     continue
                 inserted_rows += 1
                 result = _dispatch_inserted_row(cursor, staged_row)
                 row_id = int(staged_row["row_id"])
+                row_manifest["dispatch_result"] = result.get("result")
+                row_manifest["reason"] = result.get("reason")
+                row_results.append(row_manifest)
                 if result.get("result") in {"reconciled", "existing"}:
-                    classification_type = str(staged_row.get("classification_type"))
                     reconciled_counts[classification_type] = (
                         reconciled_counts.get(classification_type, 0) + 1
                     )
                 else:
                     pending_rows.append(row_id)
+                    maybe_alert_pending(
+                        cursor,
+                        classification_type=classification_type,
+                        row_id=row_id,
+                        batch_id=staging["batch_id"],
+                        result=result,
+                    )
             cursor.execute(
                 """UPDATE finance_import_batches
                    SET status='completed', completed_at=CURRENT_TIMESTAMP,
@@ -526,14 +553,28 @@ def import_finance_workbook(excel_path: str) -> dict[str, Any]:
             )
             if getattr(cursor, "rowcount", 1) != 1:
                 raise RuntimeError("finance import batch completion failed")
-        connection.commit()
-        return {
-            "batch_id": staging["batch_id"],
+        result_manifest = {
+            "mode": "dry_run" if dry_run else "apply",
+            "source_path": source_path,
+            "format_manifest": {
+                "format_id": normalized_result.get("format_id"),
+                "sheet_name": normalized_result.get("sheet_name"),
+                "header_row": normalized_result.get("header_row"),
+                "normalized_row_count": len(normalized_result["normalized_rows"]),
+            },
+            "batch_id": None if dry_run else staging["batch_id"],
             "inserted_rows": inserted_rows,
             "skipped_existing": skipped_existing,
             "reconciled_counts": reconciled_counts,
-            "pending_rows": pending_rows,
+            "pending_rows": [] if dry_run else pending_rows,
+            "row_results": row_results,
+            "transaction_outcome": "rolled_back" if dry_run else "committed",
         }
+        if dry_run:
+            connection.rollback()
+        else:
+            connection.commit()
+        return result_manifest
     except Exception:
         connection.rollback()
         raise
@@ -545,6 +586,11 @@ def main():
     parser = argparse.ArgumentParser(description="Import finance Excel data")
     parser.add_argument("--check", action="store_true", help="Only verify readiness")
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run the complete import and reconciliation path, then roll back",
+    )
+    parser.add_argument(
         "--excel-path",
         default="document/資料庫、資料處理/帳務.xlsx",
     )
@@ -554,11 +600,8 @@ def main():
         return 0
     if not os.path.exists(args.excel_path):
         raise FileNotFoundError(f"找不到帳務 Excel：{args.excel_path}")
-    result = import_finance_workbook(args.excel_path)
-    print(f"batch_id: {result['batch_id']}")
-    print(f"inserted_rows: {result['inserted_rows']}")
-    print(f"skipped_existing: {result['skipped_existing']}")
-    print(f"pending_rows: {len(result['pending_rows'])}")
+    result = import_finance_workbook(args.excel_path, dry_run=args.dry_run)
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0
 
 

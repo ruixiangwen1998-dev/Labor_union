@@ -7,7 +7,7 @@ from services.client_payment_writer import build_client_summary_update
 
 
 class FakeCursor:
-    def __init__(self, *, payment=None, conflicts=None, transactions=None):
+    def __init__(self, *, payment=None, conflicts=None, transactions=None, active_lock=None):
         self.payment = payment or {
             "id": 1,
             "case_no": "115000001",
@@ -17,6 +17,7 @@ class FakeCursor:
         }
         self.conflicts = conflicts or []
         self.transactions = transactions or []
+        self.active_lock = active_lock
         self.executed = []
         self.current = None
         self.lastrowid = 81
@@ -36,6 +37,8 @@ class FakeCursor:
             self.current = self.conflicts
         elif "WHERE client_payment_id = %s" in compact:
             self.current = self.transactions
+        elif "FROM caregiver_availability_locks l" in compact:
+            self.current = self.active_lock
         else:
             self.current = None
 
@@ -170,6 +173,25 @@ def test_failed_transaction_is_stored_without_changing_summary_or_settlement_dat
     assert result["deposit_received_at"] is None
     assert any(statement.startswith("INSERT") for statement, _ in cursor.executed)
     assert not any(statement.startswith("UPDATE") for statement, _ in cursor.executed)
+
+
+def test_deposit_with_active_lock_waits_for_atomic_assignment_conversion(monkeypatch):
+    cursor = FakeCursor(active_lock={"id": 77})
+    monkeypatch.setattr(
+        writer,
+        "_activate_subsidy_return_obligation_after_full_receipt",
+        lambda _cursor, _payment: None,
+    )
+
+    result = writer.record_client_payment_transaction_with_cursor(
+        cursor, 1, _candidate()
+    )
+
+    assert result["awaiting_availability_lock_conversion"] is True
+    assert not any(
+        "SET status = '訂單成立'" in statement
+        for statement, _ in cursor.executed
+    )
 
 
 def test_same_finance_import_row_can_be_allocated_across_multiple_stages(monkeypatch):

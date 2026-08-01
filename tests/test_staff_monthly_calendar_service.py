@@ -61,7 +61,19 @@ def test_get_staff_monthly_calendar_schedule_keeps_per_day_rows_and_base_shape(m
         row(id=11, work_date=date(2026, 7, 3), assignment_id=12, is_work_day=False, client_name="客戶 A"),
         row(id=12, work_date=date(2026, 7, 5), assignment_id=13, is_work_day=True, client_name="客戶 B"),
     ]
-    connection = FakeConnection([{"id": 7}, rows])
+    lock_rows = [
+        {
+            "work_date": date(2026, 7, 4),
+            "staff_id": 7,
+            "lock_id": 90,
+            "plan_id": 80,
+            "case_no": "115000002",
+            "client_name": "客戶 C",
+            "order_status": "洽談中",
+            "staff_name": "月嫂甲",
+        }
+    ]
+    connection = FakeConnection([{"id": 7}, rows, lock_rows])
     monkeypatch.setattr(staff_monthly_calendar_schedule_service, "get_connection", lambda: connection)
 
     result = staff_monthly_calendar_schedule_service.get_staff_monthly_calendar_schedule(
@@ -83,10 +95,20 @@ def test_get_staff_monthly_calendar_schedule_keeps_per_day_rows_and_base_shape(m
     assert result["days"][3]["status"] == "resting"
     assert result["days"][5]["assignment_id"] == 13
     assert result["days"][5]["status"] == "working"
+    waiting = next(
+        item
+        for item in result["days"]
+        if item["work_date"] == "2026-07-04"
+        and item["status"] == "waiting_deposit_lock"
+    )
+    assert waiting["assignment_id"] is None
+    assert waiting["case_no"] == "115000002"
+    assert waiting["lock_id"] == 90
 
     assert result["schedule_map"][3]["status"] == "red"
     assert result["schedule_map"][3]["assignment_id"] == 11
     assert result["schedule_map"][5]["status"] == "red"
+    assert result["schedule_map"][4]["status"] == "yellow"
 
     for item in result["days"]:
         assert item["staff_id"] == 7
@@ -104,12 +126,19 @@ def test_get_staff_monthly_calendar_schedule_keeps_per_day_rows_and_base_shape(m
 
     query, params = connection.cursor_obj.executed[1]
     assert "JOIN case_staff_assignments" in query
+    assert "o.status AS order_status" in query
+    assert "o.order_status" not in query
+    assert params == (7, date(2026, 7, 1), date(2026, 7, 31))
+    query, params = connection.cursor_obj.executed[2]
+    assert "JOIN caregiver_availability_locks" in query
+    assert "o.status AS order_status" in query
+    assert "o.order_status" not in query
     assert params == (7, date(2026, 7, 1), date(2026, 7, 31))
     assert connection.closed is True
 
 
 def test_get_staff_monthly_calendar_schedule_supports_30_day_month(monkeypatch):
-    connection = FakeConnection([{"id": 7}, []])
+    connection = FakeConnection([{"id": 7}, [], []])
     monkeypatch.setattr(staff_monthly_calendar_schedule_service, "get_connection", lambda: connection)
 
     result = staff_monthly_calendar_schedule_service.get_staff_monthly_calendar_schedule(

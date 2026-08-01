@@ -3,6 +3,11 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from api.routes import orders
+from services.admin_auth_service import AdminPrincipal
+
+
+def principal(username: str = "admin") -> AdminPrincipal:
+    return AdminPrincipal(1, username, "Admin", "system_admin")
 
 
 def order_change():
@@ -37,6 +42,71 @@ def apply_request(**overrides):
     }
     payload.update(overrides)
     return orders.OrderAssignmentSynchronizationApplyRequest(**payload)
+
+
+def cancel_request(**overrides):
+    payload = {
+        "event_key": "evt-001",
+        "actor": "operator-a",
+        "cancel_reason": "Client requested cancellation",
+    }
+    payload.update(overrides)
+    return orders.OrderLockCancellationRequest(**payload)
+
+
+def test_cancel_route_delegates_lock_cancellation_service(monkeypatch):
+    received = {}
+    def _fake_cancel(**kwargs):
+        received.update(kwargs)
+        return {
+            "result": "cancelled",
+            "case_no": kwargs["case_no"],
+            "plan_id": 77,
+            "lock_id": 55,
+            "order_status": "訂單取消",
+            "cancel_reason": kwargs["cancel_reason"],
+            "lock_rows": [],
+        }
+
+    monkeypatch.setattr(orders, "cancel_caregiver_availability_lock_for_order", _fake_cancel)
+
+    response = orders.cancel_order_lock_for_case_no(cancel_request(), case_no="C-1")
+
+    assert received["case_no"] == "C-1"
+    assert received["event_key"] == "evt-001"
+    assert received["actor"] == "operator-a"
+    assert received["cancel_reason"] == "Client requested cancellation"
+    assert response.success is True
+    assert response.data["result"] == "cancelled"
+    assert response.data["case_no"] == "C-1"
+
+
+def test_cancel_route_maps_service_validation_to_422(monkeypatch):
+    monkeypatch.setattr(
+        orders,
+        "cancel_caregiver_availability_lock_for_order",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("case is not in negotiation")),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        orders.cancel_order_lock_for_case_no(cancel_request(), case_no="C-1")
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "case is not in negotiation"
+
+
+def test_cancel_route_maps_service_errors_to_500(monkeypatch):
+    monkeypatch.setattr(
+        orders,
+        "cancel_caregiver_availability_lock_for_order",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        orders.cancel_order_lock_for_case_no(cancel_request(event_key="evt-2"), case_no="C-1")
+
+    assert error.value.status_code == 500
+    assert error.value.detail == "Failed to cancel order lock"
 
 
 def test_preview_route_delegates_the_complete_explicit_plan(monkeypatch):
@@ -100,7 +170,9 @@ def test_apply_route_does_not_call_service_without_explicit_removal_ids(monkeypa
 
     with pytest.raises(HTTPException) as error:
         orders.apply_order_assignment_synchronization(
-            apply_request(schedule_change_plan={}), case_no="C-1"
+            apply_request(schedule_change_plan={}),
+            case_no="C-1",
+            principal=principal(),
         )
 
     assert error.value.status_code == 422
@@ -117,7 +189,11 @@ def test_apply_route_maps_unapplied_locked_result_to_409(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as error:
-        orders.apply_order_assignment_synchronization(apply_request(), case_no="C-1")
+        orders.apply_order_assignment_synchronization(
+            apply_request(),
+            case_no="C-1",
+            principal=principal(),
+        )
 
     assert error.value.status_code == 409
     assert error.value.detail["sync_status"] == "locked"
@@ -133,7 +209,28 @@ def test_apply_route_maps_service_validation_to_422(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as error:
-        orders.apply_order_assignment_synchronization(apply_request(), case_no="C-1")
+        orders.apply_order_assignment_synchronization(
+            apply_request(),
+            case_no="C-1",
+            principal=principal(),
+        )
 
     assert error.value.status_code == 422
     assert error.value.detail == "stale schedule plan"
+
+
+def test_apply_route_rejects_spoofed_actor_before_service(monkeypatch):
+    monkeypatch.setattr(
+        orders,
+        "apply_order_assignment_sync",
+        lambda **_kwargs: pytest.fail("must not apply"),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        orders.apply_order_assignment_synchronization(
+            apply_request(applied_by="other-admin"),
+            case_no="C-1",
+            principal=principal(),
+        )
+
+    assert error.value.status_code == 403

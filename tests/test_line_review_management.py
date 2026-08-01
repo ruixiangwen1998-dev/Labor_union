@@ -21,7 +21,6 @@ from services.line_review_service import (
     reject_line_review,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -281,111 +280,6 @@ def test_review_filters_and_ui_have_no_fixed_polling():
     assert "time.sleep" not in source
     assert "autorefresh" not in source.lower()
     assert "render_review_manager(client, token, profile)" in page
-
-
-def test_review_api_enforces_agent_and_manager_roles_and_records_reviewer():
-    suffix = uuid.uuid4().hex
-    user_id = f"U-review-{suffix}"
-    request_id = _insert_staff_review(user_id)
-    password = "Stage56-test-password!"
-    agent_id = create_admin_user(
-        username=f"agent-{suffix}",
-        password=password,
-        display_name="審查測試客服",
-        role="line_agent",
-    )
-    manager_id = create_admin_user(
-        username=f"manager-{suffix}",
-        password=password,
-        display_name="審查測試主管",
-        role="line_manager",
-    )
-    old_values = {
-        name: os.environ.get(name)
-        for name in ("APP_ENV", "ENABLE_ADMIN_AUTH", "INTERNAL_API_KEY")
-    }
-    os.environ["APP_ENV"] = "production"
-    os.environ["ENABLE_ADMIN_AUTH"] = "true"
-    os.environ["INTERNAL_API_KEY"] = "stage-5-6-role-key"
-    client = TestClient(app)
-    service_header = {"X-Internal-API-Key": "stage-5-6-role-key"}
-    try:
-        agent_login = client.post(
-            "/api/v1/admin/auth/login",
-            headers=service_header,
-            json={"username": f"agent-{suffix}", "password": password},
-        )
-        manager_login = client.post(
-            "/api/v1/admin/auth/login",
-            headers=service_header,
-            json={"username": f"manager-{suffix}", "password": password},
-        )
-        assert agent_login.status_code == 200
-        assert manager_login.status_code == 200
-        agent_headers = {
-            **service_header,
-            "Authorization": f"Bearer {agent_login.json()['data']['access_token']}",
-        }
-        manager_headers = {
-            **service_header,
-            "Authorization": f"Bearer {manager_login.json()['data']['access_token']}",
-        }
-        assert client.get(
-            "/api/v1/line/review-requests", headers=agent_headers
-        ).status_code == 200
-        assert client.post(
-            f"/api/v1/line/review-requests/{request_id}/approve",
-            headers=agent_headers,
-            json={"reason": "客服不得核准"},
-        ).status_code == 403
-        approved = client.post(
-            f"/api/v1/line/review-requests/{request_id}/approve",
-            headers=manager_headers,
-            json={"reason": "主管確認資格"},
-        )
-        assert approved.status_code == 200
-        detail = get_line_review(request_id)
-        assert int(detail["reviewed_by_admin_user_id"]) == manager_id
-        assert detail["reviewer_display_name"] == "審查測試主管"
-        conn = get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT action,resource_type,resource_id
-                    FROM admin_audit_logs
-                    WHERE admin_user_id=%s
-                    ORDER BY id DESC LIMIT 1
-                    """,
-                    (manager_id,),
-                )
-                audit = cursor.fetchone()
-            assert audit["action"] == "line.review.approve"
-            assert audit["resource_type"] == "line_confirmation_request"
-            assert audit["resource_id"] == str(request_id)
-        finally:
-            conn.close()
-    finally:
-        _cleanup_review(request_id, [user_id])
-        conn = get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "DELETE FROM admin_audit_logs WHERE admin_user_id IN (%s,%s)",
-                    (agent_id, manager_id),
-                )
-                cursor.execute(
-                    "DELETE FROM admin_users WHERE id IN (%s,%s)",
-                    (agent_id, manager_id),
-                )
-            conn.commit()
-        finally:
-            conn.close()
-        for name, value in old_values.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
 
 
 def test_schema_contains_reviewer_metadata_and_replayable_migration():

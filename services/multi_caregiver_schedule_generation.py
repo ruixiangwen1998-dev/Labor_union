@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from services.db_service import get_connection
@@ -107,6 +107,25 @@ def _assert_assignment_is_unlocked(cursor: Any, assignment_id: int) -> None:
     if cursor.fetchone() is not None:
         raise ValueError("assignment has an active monthly settlement detail")
 
+    cursor.execute(
+        """SELECT id FROM actual_hours_adjustments
+            WHERE assignment_id = %s
+            LIMIT 1 FOR UPDATE""",
+        (assignment_id,),
+    )
+    if cursor.fetchone() is not None:
+        raise ValueError("assignment has actual-hours adjustments")
+
+
+def _normalize_service_hours(service_hours_per_day: Any) -> Decimal:
+    try:
+        service_hours = Decimal(str(service_hours_per_day))
+    except (TypeError, InvalidOperation, ValueError) as exc:
+        raise ValueError("service_hours_per_day must be a finite positive decimal") from exc
+    if not service_hours.is_finite() or service_hours <= 0:
+        raise ValueError("service_hours_per_day must be a finite positive decimal")
+    return service_hours
+
 
 def _validate_assignment_id(assignment_id: object) -> int:
     if isinstance(assignment_id, bool) or not isinstance(assignment_id, int) or assignment_id < 1:
@@ -143,6 +162,8 @@ def _generate_assignment_schedule_with_cursor(cursor: Any, assignment_id: int) -
         (start_date, end_date),
     )
     holidays = {_as_date(row["holiday_date"], "holiday_date") for row in cursor.fetchall()}
+
+    daily_hours = _normalize_service_hours(assignment["service_hours_per_day"])
 
     cursor.execute(
         """SELECT id, case_no, staff_id, assignment_id, work_date,
@@ -199,9 +220,6 @@ def _generate_assignment_schedule_with_cursor(cursor: Any, assignment_id: int) -
         if is_work_day:
             work_day_count += 1
 
-    daily_hours = Decimal(str(assignment["service_hours_per_day"]))
-    if daily_hours <= 0:
-        raise ValueError("service_hours_per_day must be positive")
     actual_hours = daily_hours * work_day_count
     cursor.execute(
         "UPDATE case_staff_assignments SET actual_hours = %s WHERE id = %s",

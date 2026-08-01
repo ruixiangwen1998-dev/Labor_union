@@ -43,7 +43,8 @@ def test_streamlit_line_client_keeps_internal_key_server_side():
     source = (ROOT / "ui/api_clients/line_api_client.py").read_text(encoding="utf-8")
     page = (ROOT / "ui/pages/07_line_management.py").read_text(encoding="utf-8")
 
-    assert 'headers = {"X-Internal-API-Key": self.internal_api_key}' in source
+    assert 'headers = {"X-Internal-API-Key": resolve_internal_api_key()}' in source
+    assert "self.internal_api_key" not in source
     assert "os.getenv" not in page
 
 

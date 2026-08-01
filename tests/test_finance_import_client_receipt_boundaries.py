@@ -40,11 +40,22 @@ def test_non_business_incoming_row_is_pending_without_client_receipt_side_effect
         "reconcile_client_receipt",
         lambda cursor, row_id: called.append(row_id),
     )
+    monkeypatch.setattr(
+        importer,
+        "_load_dispatch_row",
+        lambda cursor, row_id: {
+            "id": row_id,
+            "classification_reason": "sinopac_invalid_or_missing_virtual_account",
+        },
+    )
 
     result = importer._dispatch_inserted_row(
         object(),
         {"row_id": 802, "classification_type": "non_business_review", "result": "inserted"},
     )
 
-    assert result == {"result": "pending", "reason": "non_business_review"}
+    assert result == {
+        "result": "pending",
+        "reason": "sinopac_invalid_or_missing_virtual_account",
+    }
     assert called == []
