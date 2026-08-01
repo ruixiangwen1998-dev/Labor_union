@@ -1,4 +1,9 @@
-"""Start and supervise the local FastAPI + ngrok development environment."""
+"""
+================================================================================
+檔案名稱: start_fastapi_ngrok.py
+功能說明: 開發服務監督器，管理 FastAPI、ngrok、Streamlit，並與獨立 Monitor 互相監控及重啟
+================================================================================
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,6 @@
 @echo off
+:: 檔案名稱: online.bat
+:: 功能說明: 啟動正式／連線測試用 FastAPI、Streamlit、LINE Monitor 與檔案監視服務（不啟動 ngrok）
 setlocal
 cd /d "%~dp0"
 chcp 65001 >nul

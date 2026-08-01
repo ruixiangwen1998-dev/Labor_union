@@ -1,4 +1,6 @@
 @echo off
+:: 檔案名稱: start.bat
+:: 功能說明: 初始化開發 DB／假資料，並將 LINE Monitor 與服務監督器啟動為同層程序
 setlocal
 cd /d "%~dp0"
 chcp 65001 >nul

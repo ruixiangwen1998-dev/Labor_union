@@ -1,4 +1,5 @@
--- LINE 主動監控資料表與 system_alerts 擴充；可重複執行。
+-- 檔案名稱: db/schema_parts/97_line_active_monitoring.sql
+-- 功能說明: 建立程序心跳、健康狀態並擴充監控／服務重啟異常事件；可重複執行。
 CREATE TABLE IF NOT EXISTS service_heartbeats (
     service_name VARCHAR(100) NOT NULL,
     instance_id VARCHAR(191) NOT NULL,
