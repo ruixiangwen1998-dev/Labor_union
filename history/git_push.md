@@ -90,6 +90,40 @@ LINE Monitor
 - migration 已套用開發 DB，未清空既有資料。
 - 未建立或遺留一次性 Python 檔案。
 
+## 2026-08-01 工會人員 LINE 與後台帳號安全綁定
+
+### 新增功能
+
+- 工會人員在官方帳號一對一聊天室輸入「綁定後台帳號」，取得 15 分鐘有效的一次性 LIFF 連結。
+- LIFF 驗證 LINE 身分及既有後台帳密；成功後綁定 `admin_users.linked_line_user_id` 並切換 LINE 工會人員選單，原後台權限保持不變。
+- 防止群組散播綁定連結、Token 重放、錯誤帳密暴力嘗試、月嫂身分被覆蓋，以及同一後台／LINE 帳號重複綁定。
+
+### 新增檔案
+
+- `services/line_admin_binding_service.py`：一次性 Token、帳密核對、綁定交易、Rich Menu 任務與稽核。
+- `api/routes/line_admin_binding.py`、`api/schemas/line_admin_binding.py`：公開 LIFF 綁定狀態與完成 API。
+- `line/static/union_staff_binding.html`：工會人員後台帳密綁定頁。
+- `db/schema_parts/105_line_admin_binding.sql`：可重複執行的綁定請求表 migration。
+- `tests/test_line_admin_binding.py`：錯誤密碼、成功綁定、權限保留、Rich Menu 任務與 Token 重放測試。
+
+### 修改檔案
+
+- `line/line_bot.py`：新增私訊綁定指令、群組防護、綁定 LIFF 頁路由及設定輸出。
+- `line/static/gateway.html`：白名單導向工會人員綁定頁。
+- `api/main.py`：掛載新綁定 API。
+- `db/schema.sql`：新增 `line_admin_binding_requests`。
+- `api/schemas/line_config.py`、`config/liff_settings.json`、`ui/components/line_liff_manager.py`：加入可管理的工會人員綁定頁文字與密碼欄位型別。
+- `services/line_liff_config_service.py`、`api/routes/line_system_config.py`：舊版 LIFF 歷史還原時自動補齊新的必要綁定頁。
+- `tests/test_line_liff_management.py`：加入新頁面與 LIFF 身分傳遞安全回歸。
+- `.env.example`、`config/README_CONFIG.md`：補充選填的專用 LIFF ID、共用 Gateway 與三重驗證安全邊界。
+
+### 驗證結果
+
+- 本機開發 `union_db` 已使用固定 v3 fixture 成功重建。
+- 綁定／LIFF／既有月嫂驗證目標測試：21 項通過。
+- 完整測試：1574 項通過、0 項失敗；6 個既有棄用警告。
+- 未建立或遺留一次性 Python 檔案。
+
 ## 2026-08-01 合併後追加修復
 
 ### 功能修正

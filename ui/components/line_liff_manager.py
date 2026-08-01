@@ -26,9 +26,11 @@ PAGE_LABELS = {
     "gateway": "入口選擇頁",
     "bind": "舊客戶綁定頁",
     "registration": "新客戶登記頁",
+    "union_staff_binding": "工會人員帳號綁定頁",
 }
 FIELD_TYPES = [
     "text",
+    "password",
     "textarea",
     "phone",
     "email",
@@ -40,6 +42,7 @@ FIELD_TYPES = [
 ]
 FIELD_TYPE_LABELS = {
     "text": "單行文字",
+    "password": "密碼",
     "textarea": "多行文字",
     "phone": "電話號碼",
     "email": "電子信箱",

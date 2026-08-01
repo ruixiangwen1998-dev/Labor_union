@@ -42,6 +42,10 @@ from services.line_staff_verification_service import (
     build_staff_verification_url,
     issue_staff_verification_token,
 )
+from services.line_admin_binding_service import (
+    build_line_admin_binding_url,
+    issue_line_admin_binding_token,
+)
 
 # 載入環境變數
 load_dotenv()
@@ -202,6 +206,9 @@ async def get_line_config():
         "liff_id": liff_id,
         "staff_verification_liff_id": os.getenv(
             "LINE_STAFF_VERIFICATION_LIFF_ID", ""
+        ).strip(),
+        "admin_binding_liff_id": os.getenv(
+            "LINE_ADMIN_BINDING_LIFF_ID", ""
         ).strip(),
         "identity_verification_required": liff_token_required(),
         "line_login_channel_id_configured": bool(
@@ -610,6 +617,12 @@ async def serve_staff_verification_page():
     return FileResponse("line/static/staff_verification.html")
 
 
+@router.get("/union-staff-binding-page")
+async def serve_union_staff_binding_page():
+    """提供工會人員驗證後台帳密並綁定 LINE 的 LIFF 頁面。"""
+    return FileResponse("line/static/union_staff_binding.html")
+
+
 @router.get("/api/line/staff/review-requests")
 def list_staff_review_requests(
     request_type: str | None = None,
@@ -907,6 +920,49 @@ async def line_webhook(request: Request):
                         cursor.execute("SELECT role FROM line_users WHERE line_user_id=%s", (user_id,))
                         role_row = cursor.fetchone()
                         current_role = role_row["role"] if role_row else "customer"
+
+                        # 工會人員綁定只能從官方帳號一對一聊天室發起；
+                        # 群組中不建立含帳密流程的連結，避免其他成員取得一次性 Token。
+                        if user_text.strip() == "綁定後台帳號":
+                            source_type = source.get("type") or (
+                                "group" if source.get("groupId") else
+                                "room" if source.get("roomId") else "user"
+                            )
+                            if source_type != "user":
+                                conversation_id = source.get("groupId") or source.get("roomId")
+                                if conversation_id:
+                                    enqueue_line_task(
+                                        cursor,
+                                        to_user_id=conversation_id,
+                                        message_content=(
+                                            "為保護後台帳號安全，請私訊官方帳號並輸入「綁定後台帳號」。"
+                                        ),
+                                        source_event_id=event.get("webhookEventId"),
+                                        idempotency_key=f"admin-binding-private-only:{event.get('webhookEventId')}",
+                                    )
+                                continue
+
+                            binding_request_id, binding_token = issue_line_admin_binding_token(
+                                cursor, line_user_id=user_id
+                            )
+                            binding_url = build_line_admin_binding_url(binding_token)
+                            enqueue_line_task(
+                                cursor,
+                                to_user_id=user_id,
+                                message_content=(
+                                    "請點擊以下連結登入您的管理後台帳號，完成工會人員 LINE 綁定。\n\n"
+                                    f"{binding_url}\n\n"
+                                    "連結 15 分鐘內有效；工會不會在 LINE 訊息中要求您提供密碼。"
+                                ),
+                                source_event_id=event.get("webhookEventId"),
+                                idempotency_key=f"admin-binding-request:{binding_request_id}",
+                            )
+                            print(
+                                f"[LINE Webhook] Admin binding request #{binding_request_id} "
+                                f"created for {user_id}"
+                            )
+                            continue
+
                         if current_role == "union_staff" and user_text.strip() in {"工會選單", "開啟客服系統", "月嫂驗證管理"}:
                             enqueue_line_task(
                                 cursor, to_user_id=user_id, task_type="rich_menu_link",

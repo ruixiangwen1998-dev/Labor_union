@@ -171,6 +171,47 @@
           "options": []
         }
       ]
+    },
+    "union_staff_binding": {
+      "page_type": "admin_binding",
+      "enabled": true,
+      "title": "工會人員 LINE 帳號綁定",
+      "subtitle": "請登入您的管理後台帳號。驗證成功後，只會綁定 LINE 身分，不會變更原有權限。",
+      "submit_button": "驗證並完成綁定",
+      "success_title": "綁定完成",
+      "success_description": "請回到 LINE，即可使用工會人員選單。",
+      "loading_text": "正在確認綁定連結...",
+      "content": {
+        "privacy_notice": "帳號密碼只用於本次即時驗證，不會寫入綁定申請或操作紀錄。",
+        "expired_message": "綁定連結已失效，請回到 LINE 重新輸入「綁定後台帳號」。"
+      },
+      "actions": [],
+      "fields": [
+        {
+          "id": "username",
+          "label": "後台帳號",
+          "type": "text",
+          "required": true,
+          "enabled": true,
+          "order": 10,
+          "placeholder": "請輸入後台帳號",
+          "help_text": "",
+          "system_field": true,
+          "options": []
+        },
+        {
+          "id": "password",
+          "label": "後台密碼",
+          "type": "password",
+          "required": true,
+          "enabled": true,
+          "order": 20,
+          "placeholder": "請輸入後台密碼",
+          "help_text": "",
+          "system_field": true,
+          "options": []
+        }
+      ]
     }
   }
 }

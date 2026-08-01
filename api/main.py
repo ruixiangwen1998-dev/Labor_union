@@ -29,6 +29,7 @@ from api.routes import (
     finance_reports,
     holidays,
     line_admin,
+    line_admin_binding,
     line_monitoring,
     line_rich_menus,
     line_reviews,
@@ -106,6 +107,7 @@ app.mount("/static", StaticFiles(directory="line/static"), name="static")
 app.include_router(line_router)
 app.include_router(admin_auth.router)
 app.include_router(line_admin.router)
+app.include_router(line_admin_binding.router)
 app.include_router(line_monitoring.router)
 app.include_router(line_tasks.router)
 app.include_router(line_rich_menus.router)

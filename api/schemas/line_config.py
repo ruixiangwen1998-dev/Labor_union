@@ -237,7 +237,7 @@ class LiffField(BaseModel):
     id: str = Field(min_length=1, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     label: str = Field(min_length=1, max_length=100)
     type: Literal[
-        "text", "textarea", "phone", "email", "date", "number",
+        "text", "password", "textarea", "phone", "email", "date", "number",
         "single_choice", "multiple_choice", "boolean"
     ]
     required: bool = False
@@ -256,7 +256,7 @@ class LiffField(BaseModel):
 
 
 class LiffPage(BaseModel):
-    page_type: Literal["navigation", "bind", "registration"]
+    page_type: Literal["navigation", "bind", "registration", "admin_binding"]
     enabled: bool = True
     title: str = Field(min_length=1, max_length=200)
     subtitle: str = Field(default="", max_length=1000)
@@ -310,6 +310,7 @@ class LiffSettingsConfig(BaseModel):
             "gateway": "navigation",
             "bind": "bind",
             "registration": "registration",
+            "union_staff_binding": "admin_binding",
         }
         missing = sorted(set(required_pages) - set(self.pages))
         if missing:
@@ -326,6 +327,10 @@ class LiffSettingsConfig(BaseModel):
                 "expected_date": "date",
                 "service_days": "number",
                 "address": "text",
+            },
+            "union_staff_binding": {
+                "username": "text",
+                "password": "password",
             },
         }
         for page_id, contract in required_fields.items():

@@ -183,13 +183,16 @@
 
     function redirectRequestedPage() {
         const request = getGatewayRequest();
-        if (request.target !== 'staff-verification') return false;
-        if (!request.token) throw new Error('月嫂驗證連結缺少申請憑證');
+        if (!['staff-verification', 'union-staff-binding'].includes(request.target)) return false;
+        if (!request.token) throw new Error('驗證連結缺少申請憑證');
         const params = new URLSearchParams({
             token: request.token,
             viaLiff: '1'
         });
-        window.location.replace(`/staff-verification-page?${params.toString()}`);
+        const pagePath = request.target === 'staff-verification'
+            ? '/staff-verification-page'
+            : '/union-staff-binding-page';
+        window.location.replace(`${pagePath}?${params.toString()}`);
         return true;
     }
 

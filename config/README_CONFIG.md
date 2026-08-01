@@ -194,6 +194,7 @@ LINE 用戶照片應在 Webhook 收到 message ID 後下載至受控儲存區，
 - API 只操作固定白名單檔案，不能由前端傳入任意檔案路徑。
 - Rich Menu 發布會呼叫 LINE API，應限制為管理員操作。
 - 月嫂驗證查詢及角色管理底層接口仍需使用 `X-Internal-API-Key`；Web/UI 經由後端 Client 呼叫，不把金鑰交給瀏覽器。
+- 工會人員帳號綁定頁不使用 `X-Internal-API-Key`，因瀏覽器不得持有內部金鑰；它改以短效一次性 Token、LINE ID Token 與後台帳密三者共同驗證。帳密只即時核對既有 scrypt hash，不會保存或建立後台 Session。
 
 相關環境變數：
 
@@ -206,6 +207,7 @@ ALLOWED_ORIGINS=http://localhost:8501,http://127.0.0.1:8501
 MEDIA_STORAGE_ROOT=.local_media
 MEDIA_STORAGE_PROVIDER=local
 LINE_LOGIN_CHANNEL_ID=<LIFF 所屬的 LINE Login Channel ID>
+LINE_ADMIN_BINDING_LIFF_ID=<選填；工會人員綁定專用 LIFF ID>
 LIFF_REQUIRE_ID_TOKEN=true
 LINE_REVIEW_STALE_HOURS=24
 ```

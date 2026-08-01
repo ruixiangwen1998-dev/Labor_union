@@ -45,6 +45,7 @@ from services.line_liff_config_service import (
     get_liff_snapshot,
     list_liff_history,
     snapshot_liff_config,
+    upgrade_liff_snapshot,
 )
 
 
@@ -563,7 +564,7 @@ def rollback_liff_config(
         snapshot = get_liff_snapshot(revision)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="找不到指定的 LIFF 設定版本")
-        restored = LiffSettingsConfig.model_validate(snapshot)
+        restored = LiffSettingsConfig.model_validate(upgrade_liff_snapshot(snapshot))
         _save_liff(
             restored,
             request,

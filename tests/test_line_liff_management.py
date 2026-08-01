@@ -15,6 +15,7 @@ from services.line_liff_identity_service import (
     LiffIdentityError,
     resolve_line_user_id,
 )
+from services.line_liff_config_service import upgrade_liff_snapshot
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,7 +24,9 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_stored_liff_config_has_all_runtime_pages_and_system_contracts():
     config = read_config("liff", LiffSettingsConfig)
     assert config.version == 2
-    assert set(config.pages) == {"gateway", "bind", "registration"}
+    assert set(config.pages) == {
+        "gateway", "bind", "registration", "union_staff_binding"
+    }
     assert config.pages["gateway"].page_type == "navigation"
     assert {field.id for field in config.pages["bind"].fields} >= {"name", "phone"}
     assert {field.id for field in config.pages["registration"].fields} >= {
@@ -44,6 +47,15 @@ def test_required_system_field_cannot_be_disabled():
     target["enabled"] = False
     with pytest.raises(ValidationError, match="must remain enabled and required"):
         LiffSettingsConfig.model_validate(config)
+
+
+def test_legacy_liff_snapshot_is_upgraded_with_admin_binding_page():
+    legacy = read_config("liff", LiffSettingsConfig).model_dump(mode="json")
+    legacy["pages"].pop("union_staff_binding")
+
+    upgraded = LiffSettingsConfig.model_validate(upgrade_liff_snapshot(legacy))
+
+    assert upgraded.pages["union_staff_binding"].page_type == "admin_binding"
 
 
 def test_runtime_filters_disabled_custom_fields(monkeypatch):
@@ -113,6 +125,7 @@ def test_liff_identity_uses_verified_subject(monkeypatch):
         ("gateway.html", "gateway"),
         ("bind.html", "bind"),
         ("register.html", "registration"),
+        ("union_staff_binding.html", "union_staff_binding"),
     ],
 )
 def test_liff_pages_consume_public_runtime_config(filename: str, page_id: str):
@@ -137,10 +150,23 @@ def test_gateway_routes_staff_verification_after_shared_liff_login():
     staff_page = (ROOT / "line" / "static" / "staff_verification.html").read_text(encoding="utf-8")
 
     assert "liff.state" in gateway
-    assert "target !== 'staff-verification'" in gateway
-    assert "/staff-verification-page?" in gateway
+    assert "'union-staff-binding'" in gateway
+    assert "'/staff-verification-page'" in gateway
+    assert "/union-staff-binding-page" in gateway
     assert "viaLiff" in gateway
     assert "LINE 登入狀態已失效" in staff_page
+
+
+def test_union_staff_binding_liff_keeps_password_out_of_urls_and_uses_id_token():
+    source = (ROOT / "line" / "static" / "union_staff_binding.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "liff.getIDToken()" in source
+    assert "line_id_token: idToken" in source
+    assert "development_line_user_id: developmentUserId" in source
+    assert "password: document.getElementById('password').value" in source
+    assert "?password=" not in source
 
 
 def test_liff_manager_uses_service_staff_friendly_labels():

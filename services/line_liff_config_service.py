@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: services/line_liff_config_service.py
-功能說明: LIFF 頁面設定版本服務，保存修改紀錄並提供安全還原功能
+功能說明: LIFF 頁面設定版本服務，保存修改紀錄、補齊新版必要頁面並提供安全還原功能
 ================================================================================
 """
 
@@ -96,3 +96,14 @@ def get_liff_snapshot(revision: str) -> dict[str, Any] | None:
         ),
         None,
     )
+
+
+def upgrade_liff_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Add mandatory pages introduced after an older snapshot was created."""
+    upgraded = json.loads(json.dumps(snapshot, ensure_ascii=False))
+    current = read_raw_config("liff")
+    upgraded_pages = upgraded.setdefault("pages", {})
+    current_pages = current.get("pages", {})
+    if "union_staff_binding" not in upgraded_pages:
+        upgraded_pages["union_staff_binding"] = current_pages["union_staff_binding"]
+    return upgraded
