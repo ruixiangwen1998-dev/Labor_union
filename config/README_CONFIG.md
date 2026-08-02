@@ -14,10 +14,6 @@
 - `content`：文字或 Flex JSON。
 - `variables`：可替換參數，例如 `{bind_url}`。
 - `usage`：允許使用此範本的功能。
-- `quick_menu_enabled`：是否顯示於工會人員的快捷訊息選單。
-- `quick_menu_audience`：快捷訊息分類，支援 `customer`、`staff`、`group_help`。
-- `quick_menu_order`：同一分類中的顯示順序。
-
 API：
 
 ```text

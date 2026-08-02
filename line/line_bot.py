@@ -2,7 +2,7 @@
 """
 ================================================================================
 檔案名稱: line/line_bot.py
-功能說明: LINE Bot 子路由，負責 Webhook、LIFF、身分切換、工會快捷入口與訊息任務建立
+功能說明: LINE Bot 子路由，負責 Webhook、LIFF、身分切換、工會後台入口與訊息任務建立
 ================================================================================
 """
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -79,77 +79,6 @@ def load_message_templates():
     except Exception as e:
         print(f"[LINE Webhook] Failed to load message templates: {e}")
         return {}
-
-
-def load_quick_menu_templates(audience: str) -> list[dict[str, Any]]:
-    """Return enabled service-staff quick templates in their configured order."""
-    config_path = os.path.join(
-        os.path.dirname(__file__), "..", "config", "message_templates.json"
-    )
-    try:
-        with open(config_path, "r", encoding="utf-8") as stream:
-            templates = json.load(stream).get("templates", [])
-    except (OSError, ValueError) as exc:
-        print(f"[LINE Webhook] Failed to load quick templates: {exc}")
-        return []
-    return sorted(
-        [
-            item
-            for item in templates
-            if item.get("enabled", True)
-            and item.get("quick_menu_enabled", False)
-            and item.get("quick_menu_audience") == audience
-            and item.get("message_type", "text") == "text"
-        ],
-        key=lambda item: (int(item.get("quick_menu_order", 100)), item.get("name", "")),
-    )
-
-
-def _union_staff_quick_message(audience: str) -> dict[str, Any] | None:
-    templates = load_quick_menu_templates(audience)
-    if not templates:
-        return None
-    if audience == "group_help":
-        return {"type": "text", "text": str(templates[0]["content"])}
-    liff_id = os.getenv("LINE_LIFF_ID", "").strip() or get_setting("line_liff_id", "")
-    if not liff_id or liff_id == "your_liff_id_here":
-        return None
-    audience_label = "媽媽" if audience == "customer" else "月嫂"
-    items = []
-    for item in templates[:12]:
-        query = (
-            f"?target=union-staff-portal&section=messages&audience={audience}"
-            f"&template={item['id']}"
-        )
-        items.append(
-            {
-                "type": "action",
-                "action": {
-                    "type": "uri",
-                    "label": str(item["name"])[:20],
-                    "uri": f"https://liff.line.me/{liff_id}{query}",
-                },
-            }
-        )
-    if len(templates) > 12:
-        items.append(
-            {
-                "type": "action",
-                "action": {
-                    "type": "uri",
-                    "label": "更多訊息",
-                    "uri": (
-                        f"https://liff.line.me/{liff_id}"
-                        f"?target=union-staff-portal&section=messages&audience={audience}"
-                    ),
-                },
-            }
-        )
-    return {
-        "type": "text",
-        "text": f"請選擇要傳給{audience_label}的訊息。",
-        "quickReply": {"items": items},
-    }
 
 
 def _load_rich_menu_id(role: str) -> str:
@@ -1002,39 +931,6 @@ async def line_webhook(request: Request):
                     case_no = params.get("case_no")
                     staff_id = params.get("staff_id")
 
-                    if action == "union_staff_quick_category":
-                        source = event.get("source", {})
-                        user_id = source.get("userId", "")
-                        audience = params.get("audience", "")
-                        cursor.execute(
-                            "SELECT role,status FROM line_users WHERE line_user_id=%s",
-                            (user_id,),
-                        )
-                        role_row = cursor.fetchone() or {}
-                        allowed = (
-                            source.get("type", "user") == "user"
-                            and role_row.get("role") == "union_staff"
-                            and role_row.get("status") == "active"
-                        )
-                        message = (
-                            _union_staff_quick_message(audience)
-                            if allowed and audience in {"customer", "staff", "group_help"}
-                            else None
-                        )
-                        if not allowed:
-                            message = {"type": "text", "text": "此功能僅限已綁定的工會人員使用。"}
-                        elif message is None:
-                            message = {"type": "text", "text": "目前沒有可使用的快捷訊息，請至 LINE 管理中心設定。"}
-                        enqueue_line_task(
-                            cursor,
-                            to_user_id=user_id,
-                            task_type="line_push_messages",
-                            payload={"messages": [message]},
-                            source_event_id=event.get("webhookEventId"),
-                            idempotency_key=f"union-quick:{event.get('webhookEventId')}",
-                        )
-                        continue
-                    
                     if not action or not case_no:
                         continue
                         

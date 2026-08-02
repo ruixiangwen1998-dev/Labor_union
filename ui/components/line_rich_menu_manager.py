@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: ui/components/line_rich_menu_manager.py
-功能說明: LINE 聊天下方選單管理元件，編輯按鈕、預覽圖片並安全套用單頁或雙頁選單
+功能說明: LINE 聊天下方選單管理元件，編輯按鈕、預覽圖片並安全套用各身分選單
 ================================================================================
 """
 
@@ -202,10 +202,6 @@ def render_rich_menu_manager(
         ),
     )
     selected_menu = next(item for item in menus if item["id"] == selected_id)
-    if selected_menu.get("menu_group_id"):
-        st.info(
-            "這是工會人員雙頁選單的一部分；發布時會一起檢查並套用同組頁面。"
-        )
     if not can_edit:
         st.info("目前帳號可查看與預覽，但不能儲存或發布。")
 

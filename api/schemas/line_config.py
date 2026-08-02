@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: api/schemas/line_config.py
-功能說明: LINE 訊息、快捷分類、排程、雙頁下方選單與 LIFF 設定的資料格式及安全驗證規則
+功能說明: LINE 訊息、排程、下方選單與 LIFF 設定的資料格式及安全驗證規則
 ================================================================================
 """
 
@@ -31,18 +31,12 @@ class MessageTemplate(BaseModel):
     content: str | dict[str, Any]
     variables: list[TemplateVariable] = []
     usage: list[Literal["webhook", "push", "schedule", "customer_service"]] = []
-    quick_menu_audience: Literal["customer", "staff", "group_help"] | None = None
-    quick_menu_enabled: bool = False
-    quick_menu_order: int = Field(default=100, ge=0, le=9999)
-
     @model_validator(mode="after")
     def validate_content_type(self):
         if self.message_type == "text" and not isinstance(self.content, str):
             raise ValueError("text template content must be a string")
         if self.message_type == "flex" and not isinstance(self.content, dict):
             raise ValueError("flex template content must be an object")
-        if self.quick_menu_enabled and not self.quick_menu_audience:
-            raise ValueError("quick menu template requires quick_menu_audience")
         return self
 
 

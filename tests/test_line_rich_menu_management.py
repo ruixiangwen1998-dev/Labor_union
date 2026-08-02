@@ -19,7 +19,7 @@ from services.media_storage_service import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_three_role_menu_config_and_union_staff_dual_page_preview():
+def test_three_role_menu_config_and_union_staff_portal_preview():
     config = read_config("line_menus", LineMenusConfig)
     assert {menu.audience_role for menu in config.menus} == {
         "customer",
@@ -29,20 +29,28 @@ def test_three_role_menu_config_and_union_staff_dual_page_preview():
     union_menus = [
         menu for menu in config.menus if menu.audience_role == "union_staff"
     ]
-    assert len(union_menus) == 2
-    assert {menu.menu_group_id for menu in union_menus} == {"union_staff_workspace"}
-    assert {menu.rich_menu_alias_id for menu in union_menus} == {
-        "union-staff-quick",
-        "union-staff-portal",
+    assert len(union_menus) == 1
+    assert union_menus[0].id == "union_staff_portal_menu"
+    assert union_menus[0].menu_group_id is None
+    assert union_menus[0].rich_menu_alias_id is None
+    assert not union_menus[0].is_group_entry
+    assert {button.id for button in union_menus[0].buttons} == {
+        "system_status",
+        "orders",
+        "staff_schedule",
+        "reviews",
+        "message_center",
     }
-    assert sum(menu.is_group_entry for menu in union_menus) == 1
+    assert all(
+        button.action.type != "richmenuswitch"
+        for button in union_menus[0].buttons
+    )
 
-    for union_menu in union_menus:
-        content = render_rich_menu_image(union_menu.model_dump(mode="json"))
-        with Image.open(io.BytesIO(content)) as image:
-            assert image.size == (2500, 1686)
-            assert image.format == "JPEG"
-        assert len(content) <= 1024 * 1024
+    content = render_rich_menu_image(union_menus[0].model_dump(mode="json"))
+    with Image.open(io.BytesIO(content)) as image:
+        assert image.size == (2500, 1686)
+        assert image.format == "JPEG"
+    assert len(content) <= 1024 * 1024
 
 
 def test_rich_menu_switch_action_uses_line_alias():

@@ -68,75 +68,12 @@
       ]
     },
     {
-      "id": "union_staff_quick_menu",
-      "name": "工會人員快捷訊息",
-      "audience_role": "union_staff",
-      "enabled": true,
-      "selected": true,
-      "set_as_default": false,
-      "menu_group_id": "union_staff_workspace",
-      "rich_menu_alias_id": "union-staff-quick",
-      "is_group_entry": true,
-      "chat_bar_text": "工會快捷工具",
-      "size": {"width": 2500, "height": 1686},
-      "appearance": {
-        "background_color": "#ECFDF5",
-        "image_mode": "generated",
-        "image_path": "line/union_staff_quick_menu.jpg"
-      },
-      "buttons": [
-        {
-          "id": "group_help",
-          "label": "群組工具",
-          "text_color": "#FFFFFF",
-          "background_color": "#047857",
-          "bounds": {"x": 0, "y": 0, "width": 2500, "height": 562},
-          "action": {"type": "postback", "text": null, "uri": null, "uri_source": "literal", "data": "action=union_staff_quick_category&audience=group_help", "rich_menu_alias_id": null}
-        },
-        {
-          "id": "customer_messages",
-          "label": "傳給媽媽",
-          "text_color": "#FFFFFF",
-          "background_color": "#059669",
-          "bounds": {"x": 0, "y": 562, "width": 1250, "height": 562},
-          "action": {"type": "postback", "text": null, "uri": null, "uri_source": "literal", "data": "action=union_staff_quick_category&audience=customer", "rich_menu_alias_id": null}
-        },
-        {
-          "id": "staff_messages",
-          "label": "傳給月嫂",
-          "text_color": "#FFFFFF",
-          "background_color": "#10B981",
-          "bounds": {"x": 1250, "y": 562, "width": 1250, "height": 562},
-          "action": {"type": "postback", "text": null, "uri": null, "uri_source": "literal", "data": "action=union_staff_quick_category&audience=staff", "rich_menu_alias_id": null}
-        },
-        {
-          "id": "quick_tab",
-          "label": "快捷訊息",
-          "text_color": "#FFFFFF",
-          "background_color": "#065F46",
-          "bounds": {"x": 0, "y": 1124, "width": 1250, "height": 562},
-          "action": {"type": "richmenuswitch", "text": null, "uri": null, "uri_source": "literal", "data": "menu=union_staff_quick", "rich_menu_alias_id": "union-staff-quick"}
-        },
-        {
-          "id": "portal_tab",
-          "label": "工會後台",
-          "text_color": "#FFFFFF",
-          "background_color": "#0F766E",
-          "bounds": {"x": 1250, "y": 1124, "width": 1250, "height": 562},
-          "action": {"type": "richmenuswitch", "text": null, "uri": null, "uri_source": "literal", "data": "menu=union_staff_portal", "rich_menu_alias_id": "union-staff-portal"}
-        }
-      ]
-    },
-    {
       "id": "union_staff_portal_menu",
       "name": "工會人員後台入口",
       "audience_role": "union_staff",
       "enabled": true,
       "selected": true,
       "set_as_default": false,
-      "menu_group_id": "union_staff_workspace",
-      "rich_menu_alias_id": "union-staff-portal",
-      "is_group_entry": false,
       "chat_bar_text": "工會後台",
       "size": {"width": 2500, "height": 1686},
       "appearance": {
@@ -178,28 +115,12 @@
           "action": {"type": "uri", "text": null, "uri": "?target=union-staff-portal&section=reviews", "uri_source": "liff", "data": null, "rich_menu_alias_id": null}
         },
         {
-          "id": "quick_tab",
-          "label": "快捷訊息",
-          "text_color": "#FFFFFF",
-          "background_color": "#1E3A8A",
-          "bounds": {"x": 0, "y": 1124, "width": 833, "height": 562},
-          "action": {"type": "richmenuswitch", "text": null, "uri": null, "uri_source": "literal", "data": "menu=union_staff_quick", "rich_menu_alias_id": "union-staff-quick"}
-        },
-        {
           "id": "message_center",
           "label": "訊息發送",
           "text_color": "#FFFFFF",
           "background_color": "#1D4ED8",
-          "bounds": {"x": 833, "y": 1124, "width": 834, "height": 562},
+          "bounds": {"x": 0, "y": 1124, "width": 2500, "height": 562},
           "action": {"type": "uri", "text": null, "uri": "?target=union-staff-portal&section=messages", "uri_source": "liff", "data": null, "rich_menu_alias_id": null}
-        },
-        {
-          "id": "portal_tab",
-          "label": "工會後台",
-          "text_color": "#FFFFFF",
-          "background_color": "#1E40AF",
-          "bounds": {"x": 1667, "y": 1124, "width": 833, "height": 562},
-          "action": {"type": "richmenuswitch", "text": null, "uri": null, "uri_source": "literal", "data": "menu=union_staff_portal", "rich_menu_alias_id": "union-staff-portal"}
         }
       ]
     }

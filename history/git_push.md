@@ -269,3 +269,26 @@ LINE Monitor
 - Supervisor／LINE Monitor 針對性測試：21 項通過。
 - 完整測試：1596 項通過，0 項失敗，6 個既有棄用警告。
 - 未建立或遺留一次性 Python 檔案。
+## 工會人員 Rich Menu 簡化為單頁後台入口
+
+### 功能調整
+
+- 移除工會人員原有的「快捷訊息」Rich Menu 頁及雙頁切換按鈕。
+- 保留工會人員後台入口，提供系統狀態、訂單、排休、待確認申請及訊息發送功能。
+- 媽媽與月嫂原有 Rich Menu 不受影響。
+- LINE 管理中心同步移除已失效的快捷選單分類與排序設定。
+
+### 主要修改檔案
+
+- `config/line_menu.json`：工會人員選單改為單頁後台入口並重新配置底部訊息發送按鈕。
+- `line/line_bot.py`：移除快捷選單 Postback 與 Quick Reply 產生邏輯。
+- `ui/components/line_message_manager.py`：移除工會快捷選單顯示分類與排序欄位。
+- `ui/components/line_rich_menu_manager.py`：更新單頁選單功能說明，移除雙頁提示。
+- `api/schemas/line_config.py`、`config/message_templates.json`、`config/README_CONFIG.md`：移除快捷選單專用範本欄位與文件說明。
+- `tests/test_line_rich_menu_management.py`、`tests/test_line_message_management.py`：更新單頁選單與無殘留快捷設定的回歸測試。
+
+### 驗證結果
+
+- LINE 選單、訊息、工會帳號綁定及任務管理測試：21 項通過。
+- 未直接變更 LINE 平台線上選單；部署後需在 LINE 管理中心重新套用工會人員後台選單。
+- 未建立或遺留一次性 Python 檔案。

@@ -90,15 +90,13 @@ def test_message_manager_hides_engineering_fields_from_service_staff():
     assert "範本變數" not in source
 
 
-def test_union_staff_quick_menu_templates_cover_three_audiences():
+def test_message_templates_do_not_expose_removed_union_quick_menu_metadata():
     config = read_config("message_templates", MessageTemplatesConfig)
-    quick_templates = [
-        template for template in config.templates if template.quick_menu_enabled
-    ]
+    source = (ROOT / "config/message_templates.json").read_text(encoding="utf-8")
+    manager = (ROOT / "ui/components/line_message_manager.py").read_text(
+        encoding="utf-8"
+    )
 
-    assert {template.quick_menu_audience for template in quick_templates} >= {
-        "customer",
-        "staff",
-        "group_help",
-    }
-    assert all(template.enabled for template in quick_templates)
+    assert config.templates
+    assert "quick_menu_" not in source
+    assert "工會快捷選單" not in manager
