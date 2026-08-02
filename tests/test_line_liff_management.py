@@ -157,6 +157,23 @@ def test_gateway_routes_staff_verification_after_shared_liff_login():
     assert "LINE 登入狀態已失效" in staff_page
 
 
+def test_gateway_and_union_staff_portal_use_verified_liff_identity():
+    gateway = (ROOT / "line" / "static" / "gateway.html").read_text(
+        encoding="utf-8"
+    )
+    portal = (ROOT / "line" / "static" / "union_staff_portal.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "'union-staff-portal'" in gateway
+    assert "/union-staff-portal-page" in gateway
+    assert "liff.getIDToken()" in portal
+    assert "/api/line/union-staff-portal/session" in portal
+    assert "X-Internal-API-Key" not in portal
+    assert "detail.innerHTML" not in portal
+    assert "button.innerHTML" not in portal
+
+
 def test_union_staff_binding_liff_keeps_password_out_of_urls_and_uses_id_token():
     source = (ROOT / "line" / "static" / "union_staff_binding.html").read_text(
         encoding="utf-8"

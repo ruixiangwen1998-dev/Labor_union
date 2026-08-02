@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: ui/components/line_message_manager.py
-功能說明: LINE 訊息內容管理元件，提供常用訊息與自動通知文字的新增、修改、預覽及刪除
+功能說明: LINE 訊息內容管理元件，維護常用訊息、自動通知及工會人員快捷訊息分類
 ================================================================================
 """
 
@@ -50,6 +50,12 @@ USE_CASES = {
         "usage": ["schedule"],
     },
 }
+QUICK_MENU_AUDIENCES = {
+    "none": "不顯示在工會快捷選單",
+    "customer": "傳給媽媽",
+    "staff": "傳給月嫂",
+    "group_help": "群組工具說明",
+}
 
 
 def _empty_template() -> dict[str, Any]:
@@ -62,6 +68,9 @@ def _empty_template() -> dict[str, Any]:
         "content": "",
         "variables": [],
         "usage": ["customer_service"],
+        "quick_menu_audience": None,
+        "quick_menu_enabled": False,
+        "quick_menu_order": 100,
     }
 
 
@@ -119,6 +128,9 @@ def _payload_from_form(
     content_source: str,
     usage: list[str],
     variable_rows: pd.DataFrame,
+    quick_menu_audience: str | None = None,
+    quick_menu_enabled: bool = False,
+    quick_menu_order: int = 100,
 ) -> dict[str, Any]:
     content: str | dict[str, Any]
     if message_type == "flex":
@@ -149,6 +161,9 @@ def _payload_from_form(
         "content": content,
         "variables": variables,
         "usage": usage,
+        "quick_menu_audience": quick_menu_audience or None,
+        "quick_menu_enabled": bool(quick_menu_enabled and quick_menu_audience),
+        "quick_menu_order": int(quick_menu_order),
     }
 
 
@@ -284,6 +299,22 @@ def render_message_manager(
             category = USE_CASES[use_case]["category"]
             usage = list(USE_CASES[use_case]["usage"])
         message_type = item["message_type"]
+        quick_current = item.get("quick_menu_audience") or "none"
+        quick_col1, quick_col2 = st.columns([3, 1])
+        quick_audience = quick_col1.selectbox(
+            "是否顯示在工會快捷選單？",
+            list(QUICK_MENU_AUDIENCES),
+            index=list(QUICK_MENU_AUDIENCES).index(quick_current),
+            format_func=lambda value: QUICK_MENU_AUDIENCES[value],
+            disabled=not can_edit,
+        )
+        quick_order = quick_col2.number_input(
+            "顯示順序",
+            min_value=0,
+            max_value=9999,
+            value=int(item.get("quick_menu_order", 100)),
+            disabled=not can_edit or quick_audience == "none",
+        )
         content_value = (
             json.dumps(item["content"], ensure_ascii=False, indent=2)
             if isinstance(item["content"], dict)
@@ -326,6 +357,11 @@ def render_message_manager(
                 content_source=content_source,
                 usage=usage,
                 variable_rows=variable_rows,
+                quick_menu_audience=(
+                    None if quick_audience == "none" else quick_audience
+                ),
+                quick_menu_enabled=quick_audience != "none",
+                quick_menu_order=int(quick_order),
             )
             preview_values = _preview_values(item)
         except (ValueError, json.JSONDecodeError) as exc:

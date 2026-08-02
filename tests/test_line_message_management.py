@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from api.routes.line_system_config import _template_schedule_references
+from api.schemas.line_config import MessageTemplatesConfig
+from services.json_config_service import read_config
 from ui.components.line_message_manager import _payload_from_form
 
 
@@ -86,3 +88,17 @@ def test_message_manager_hides_engineering_fields_from_service_staff():
     assert "範本 ID" not in source
     assert "預覽變數（JSON）" not in source
     assert "範本變數" not in source
+
+
+def test_union_staff_quick_menu_templates_cover_three_audiences():
+    config = read_config("message_templates", MessageTemplatesConfig)
+    quick_templates = [
+        template for template in config.templates if template.quick_menu_enabled
+    ]
+
+    assert {template.quick_menu_audience for template in quick_templates} >= {
+        "customer",
+        "staff",
+        "group_help",
+    }
+    assert all(template.enabled for template in quick_templates)

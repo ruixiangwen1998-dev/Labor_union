@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: ui/components/line_rich_menu_manager.py
-功能說明: LINE 聊天下方選單管理元件，編輯按鈕、預覽圖片、上傳及套用選單
+功能說明: LINE 聊天下方選單管理元件，編輯按鈕、預覽圖片並安全套用單頁或雙頁選單
 ================================================================================
 """
 
@@ -32,6 +32,7 @@ ACTION_LABELS = {
     "url": "開啟指定網頁",
     "liff": "開啟 LINE 內的服務頁面",
     "postback": "執行系統功能",
+    "richmenuswitch": "切換選單頁面",
 }
 PUBLICATION_STATUS_LABELS = {
     "pending": "等待發布",
@@ -46,7 +47,13 @@ def _button_rows(menu: dict[str, Any]) -> pd.DataFrame:
     rows = []
     for button in menu["buttons"]:
         action = button["action"]
-        value = action.get("text") or action.get("data") or action.get("uri") or ""
+        value = (
+            action.get("text")
+            or action.get("rich_menu_alias_id")
+            or action.get("data")
+            or action.get("uri")
+            or ""
+        )
         action_kind = action["type"]
         if action["type"] == "uri":
             action_kind = "liff" if action.get("uri_source") == "liff" else "url"
@@ -120,7 +127,10 @@ def _build_menu_from_editor(
             "data": value if action_type == "postback" else None,
             "uri": value if action_type == "uri" and value else None,
             "uri_source": uri_source if action_type == "uri" else "literal",
+            "rich_menu_alias_id": value if action_type == "richmenuswitch" else None,
         }
+        if action_type == "richmenuswitch":
+            action["data"] = f"menu={value}"
         buttons.append(
             {
                 "id": str(record["id"]).strip(),
@@ -192,6 +202,10 @@ def render_rich_menu_manager(
         ),
     )
     selected_menu = next(item for item in menus if item["id"] == selected_id)
+    if selected_menu.get("menu_group_id"):
+        st.info(
+            "這是工會人員雙頁選單的一部分；發布時會一起檢查並套用同組頁面。"
+        )
     if not can_edit:
         st.info("目前帳號可查看與預覽，但不能儲存或發布。")
 
@@ -353,13 +367,19 @@ def render_rich_menu_manager(
         "我已確認選單內容，要套用到 LINE",
         key=f"publish_confirm_{selected_id}",
     )
+    group_id = selected_menu.get("menu_group_id")
+    publish_label = "一起套用雙頁選單" if group_id else "套用到 LINE"
     if st.button(
-        "套用到 LINE",
+        publish_label,
         type="primary",
         disabled=not can_edit or not confirmed,
     ):
         try:
-            publication = client.publish_line_menu(token, selected_id, reason=reason)
+            publication = (
+                client.publish_line_menu_group(token, group_id, reason=reason)
+                if group_id
+                else client.publish_line_menu(token, selected_id, reason=reason)
+            )
         except LineAdminApiError as exc:
             st.error(f"無法建立發布工作：{exc}")
         else:

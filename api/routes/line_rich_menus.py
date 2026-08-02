@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: api/routes/line_rich_menus.py
-功能說明: LINE 下方選單 API，提供圖片上傳、預覽、發布、發布紀錄與失敗重試
+功能說明: LINE 下方選單 API，提供圖片、預覽、單頁／雙頁群組發布、紀錄與失敗重試
 ================================================================================
 """
 
@@ -22,6 +22,7 @@ from services.json_config_service import read_config
 from services.line_rich_menu_service import (
     RichMenuPublicationConflictError,
     RichMenuPublicationNotFoundError,
+    create_publication_group_jobs,
     create_publication_job,
     get_publication,
     list_publications,
@@ -186,6 +187,39 @@ def publication_retry(
     request.state.audit_details = {"reason": payload.reason.strip()} if payload.reason.strip() else None
     wake_worker()
     return BaseResponse(data=result, message="發布工作已重新排入")
+
+
+@router.post(
+    "/groups/{group_id}/publish",
+    response_model=BaseResponse[list[dict]],
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_line_manager)],
+)
+def publish_rich_menu_group(
+    group_id: str,
+    payload: RichMenuPublishRequest,
+    request: Request,
+):
+    try:
+        result = create_publication_group_jobs(
+            group_id,
+            request.state.admin_principal.id,
+        )
+    except (
+        RichMenuPublicationNotFoundError,
+        RichMenuPublicationConflictError,
+        MediaAssetNotFoundError,
+    ) as exc:
+        _publication_error(exc)
+    request.state.audit_action = "line.rich_menu.group.publish"
+    request.state.audit_resource_type = "line_rich_menu_group"
+    request.state.audit_resource_id = group_id
+    request.state.audit_details = {
+        "reason": payload.reason.strip(),
+        "publication_ids": [item["id"] for item in result],
+    }
+    wake_worker()
+    return BaseResponse(data=result, message="雙頁 Rich Menu 已排入安全發布流程")
 
 
 @router.post(

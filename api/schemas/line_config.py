@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: api/schemas/line_config.py
-功能說明: LINE 訊息、排程、下方選單與 LIFF 設定的資料格式及安全驗證規則
+功能說明: LINE 訊息、快捷分類、排程、雙頁下方選單與 LIFF 設定的資料格式及安全驗證規則
 ================================================================================
 """
 
@@ -31,6 +31,9 @@ class MessageTemplate(BaseModel):
     content: str | dict[str, Any]
     variables: list[TemplateVariable] = []
     usage: list[Literal["webhook", "push", "schedule", "customer_service"]] = []
+    quick_menu_audience: Literal["customer", "staff", "group_help"] | None = None
+    quick_menu_enabled: bool = False
+    quick_menu_order: int = Field(default=100, ge=0, le=9999)
 
     @model_validator(mode="after")
     def validate_content_type(self):
@@ -38,6 +41,8 @@ class MessageTemplate(BaseModel):
             raise ValueError("text template content must be a string")
         if self.message_type == "flex" and not isinstance(self.content, dict):
             raise ValueError("flex template content must be an object")
+        if self.quick_menu_enabled and not self.quick_menu_audience:
+            raise ValueError("quick menu template requires quick_menu_audience")
         return self
 
 
@@ -106,11 +111,17 @@ class MenuBounds(BaseModel):
 
 
 class MenuAction(BaseModel):
-    type: Literal["message", "uri", "postback"]
+    type: Literal["message", "uri", "postback", "richmenuswitch"]
     text: str | None = None
     uri: str | None = None
     uri_source: Literal["literal", "liff"] = "literal"
     data: str | None = None
+    rich_menu_alias_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=32,
+        pattern=r"^[a-z0-9_-]+$",
+    )
 
     @model_validator(mode="after")
     def validate_action_value(self):
@@ -123,6 +134,11 @@ class MenuAction(BaseModel):
                 raise ValueError("literal uri action only supports http or https")
         if self.type == "postback" and not self.data:
             raise ValueError("postback action requires data")
+        if self.type == "richmenuswitch":
+            if not self.rich_menu_alias_id:
+                raise ValueError("rich menu switch action requires rich_menu_alias_id")
+            if not self.data:
+                raise ValueError("rich menu switch action requires data")
         return self
 
 
@@ -160,6 +176,19 @@ class RichMenuDefinition(BaseModel):
     enabled: bool = True
     selected: bool = True
     set_as_default: bool = False
+    menu_group_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+    )
+    rich_menu_alias_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=32,
+        pattern=r"^[a-z0-9_-]+$",
+    )
+    is_group_entry: bool = False
     chat_bar_text: str = Field(min_length=1, max_length=14)
     size: RichMenuSize = RichMenuSize()
     appearance: RichMenuAppearance = RichMenuAppearance()
@@ -187,6 +216,10 @@ class RichMenuDefinition(BaseModel):
                     raise ValueError(f"buttons {button.id} and {other.id} overlap")
         if self.set_as_default and self.audience_role != "customer":
             raise ValueError("only the customer menu can be the default menu")
+        if self.menu_group_id and not self.rich_menu_alias_id:
+            raise ValueError("grouped rich menu requires rich_menu_alias_id")
+        if self.is_group_entry and not self.menu_group_id:
+            raise ValueError("group entry rich menu requires menu_group_id")
         return self
 
 
@@ -199,10 +232,22 @@ class LineMenusConfig(BaseModel):
         ids = [item.id for item in self.menus]
         if len(ids) != len(set(ids)):
             raise ValueError("rich menu ids must be unique")
+        aliases = [item.rich_menu_alias_id for item in self.menus if item.rich_menu_alias_id]
+        if len(aliases) != len(set(aliases)):
+            raise ValueError("rich menu alias ids must be unique")
         enabled = [item for item in self.menus if item.enabled]
-        roles = [item.audience_role for item in enabled]
-        if len(roles) != len(set(roles)):
-            raise ValueError("only one enabled rich menu is allowed for each audience role")
+        for role in {item.audience_role for item in enabled}:
+            role_menus = [item for item in enabled if item.audience_role == role]
+            if len(role_menus) == 1:
+                continue
+            group_ids = {item.menu_group_id for item in role_menus}
+            if None in group_ids or len(group_ids) != 1:
+                raise ValueError(
+                    "multiple enabled rich menus for one role must belong to the same group"
+                )
+            entries = [item for item in role_menus if item.is_group_entry]
+            if len(entries) != 1:
+                raise ValueError("each enabled rich menu group requires exactly one entry menu")
         defaults = [item for item in enabled if item.set_as_default]
         if len(defaults) != 1:
             raise ValueError("exactly one enabled default rich menu is required")

@@ -14,6 +14,9 @@
 - `content`：文字或 Flex JSON。
 - `variables`：可替換參數，例如 `{bind_url}`。
 - `usage`：允許使用此範本的功能。
+- `quick_menu_enabled`：是否顯示於工會人員的快捷訊息選單。
+- `quick_menu_audience`：快捷訊息分類，支援 `customer`、`staff`、`group_help`。
+- `quick_menu_order`：同一分類中的顯示順序。
 
 API：
 
@@ -34,6 +37,9 @@ POST   /api/config/message-templates/{template_id}/preview
 - `audience_role`：明確對應 `customer`、`staff` 或 `union_staff`。
 - `appearance.image_mode`：`generated` 使用設定產圖；`uploaded` 使用受控媒體資產。
 - `appearance.image_asset_id`：上傳圖片對應的 MySQL `media_assets.id`。
+- `menu_group_id`：將多頁選單組成同一個發布群組。
+- `rich_menu_alias_id`：LINE 平台用於頁面切換的穩定 Alias。
+- `is_group_entry`：同組唯一入口頁；只有入口頁會綁定至該角色的 LINE 使用者。
 
 Action 支援：
 
@@ -41,6 +47,7 @@ Action 支援：
 - `uri`：開啟固定 URL。
 - `uri`＋`uri_source: liff`：開啟目前設定的 LIFF。
 - `postback`：傳送 postback data。
+- `richmenuswitch`：使用 Alias 在同一組 Rich Menu 頁面間切換。
 
 API：
 
@@ -56,13 +63,16 @@ POST   /api/config/line-menus/{menu_id}/preview
 POST   /api/config/line-menus/{menu_id}/publish
 POST   /api/v1/line/rich-menus/preview
 POST   /api/v1/line/rich-menus/{menu_id}/images
+POST   /api/v1/line/rich-menus/groups/{group_id}/publish
 GET    /api/v1/line/rich-menus/publications
 GET    /api/v1/line/rich-menus/publications/{publication_id}
 POST   /api/v1/line/rich-menus/publications/{publication_id}/retry
 ```
 
 儲存與發布分開。修改 JSON 不會立即更動 LINE；發布接口會建立持久化工作並喚醒 Worker，
-一次只發布指定 Menu。設定更新須帶 `If-Match` revision，舊畫面會收到 409。
+單頁選單只發布指定 Menu；雙頁選單則會先發布其他頁、建立或更新 Alias，最後才套用入口頁。
+若同組頁面未完整發布，入口頁不會取代使用者目前的選單。設定更新須帶 `If-Match` revision，
+舊畫面會收到 409。
 
 圖片上傳會檢查實際 JPEG／PNG 格式、尺寸與檔案大小，再重新編碼為 JPEG。圖片本體位於
 `MEDIA_STORAGE_ROOT`（正式環境建議 NAS 或受控磁碟），MySQL `media_assets` 保存路徑、

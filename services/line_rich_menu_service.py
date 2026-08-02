@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: services/line_rich_menu_service.py
-功能說明: LINE 下方選單可靠發布服務，管理圖片、版本、發布狀態、重試與使用者綁定
+功能說明: LINE 下方選單可靠發布服務，管理圖片、雙頁群組、Alias、發布重試與使用者綁定
 ================================================================================
 """
 
@@ -112,6 +112,29 @@ def create_publication_job(menu_id: str, requested_by_admin_user_id: int | None)
         raise
     finally:
         conn.close()
+
+
+def create_publication_group_jobs(
+    group_id: str,
+    requested_by_admin_user_id: int | None,
+) -> list[dict[str, Any]]:
+    """Queue every enabled menu in a tab group, publishing the entry menu last."""
+    config = read_config("line_menus", LineMenusConfig)
+    menus = [
+        menu
+        for menu in config.menus
+        if menu.enabled and menu.menu_group_id == group_id
+    ]
+    if len(menus) < 2:
+        raise RichMenuPublicationNotFoundError(f"找不到可發布的選單群組 {group_id}")
+    entries = [menu for menu in menus if menu.is_group_entry]
+    if len(entries) != 1:
+        raise RichMenuPublicationConflictError("選單群組必須只有一個入口頁")
+    ordered = sorted(menus, key=lambda menu: (menu.is_group_entry, menu.id))
+    return [
+        create_publication_job(menu.id, requested_by_admin_user_id)
+        for menu in ordered
+    ]
 
 
 def get_publication(publication_id: int) -> dict[str, Any]:
@@ -230,6 +253,10 @@ def get_current_rich_menu_id(audience_role: str) -> str:
                 """
                 SELECT line_rich_menu_id FROM line_rich_menu_publications
                 WHERE audience_role=%s AND status='published' AND is_current=TRUE
+                  AND (
+                    JSON_EXTRACT(config_snapshot,'$.menu_group_id') IS NULL
+                    OR JSON_UNQUOTE(JSON_EXTRACT(config_snapshot,'$.is_group_entry'))='true'
+                  )
                 ORDER BY published_at DESC, id DESC LIMIT 1
                 """,
                 (audience_role,),
@@ -375,6 +402,12 @@ def build_line_action(action: dict[str, Any]) -> dict[str, str]:
         return {"type": "message", "text": action["text"]}
     if action["type"] == "postback":
         return {"type": "postback", "data": action["data"]}
+    if action["type"] == "richmenuswitch":
+        return {
+            "type": "richmenuswitch",
+            "richMenuAliasId": action["rich_menu_alias_id"],
+            "data": action["data"],
+        }
     if action.get("uri_source") == "liff":
         liff_id = os.getenv("LINE_LIFF_ID", "").strip()
         if not liff_id:
@@ -420,6 +453,78 @@ def _line_request(method: str, url: str, **kwargs) -> requests.Response:
     return response
 
 
+def _upsert_rich_menu_alias(
+    alias_id: str,
+    rich_menu_id: str,
+    headers: dict[str, str],
+) -> None:
+    lookup_url = f"https://api.line.me/v2/bot/richmenu/alias/{alias_id}"
+    try:
+        response = requests.get(lookup_url, headers=headers, timeout=30)
+    except requests.RequestException as exc:
+        raise RichMenuPublishError("network_error", str(exc), retryable=True) from exc
+    if response.status_code == 404:
+        _line_request(
+            "POST",
+            "https://api.line.me/v2/bot/richmenu/alias",
+            headers=headers,
+            json={"richMenuAliasId": alias_id, "richMenuId": rich_menu_id},
+        )
+        return
+    if not response.ok:
+        raise RichMenuPublishError(
+            f"http_{response.status_code}",
+            response.text[:4000],
+            retryable=response.status_code in RETRYABLE_HTTP,
+        )
+    _line_request(
+        "POST",
+        lookup_url,
+        headers=headers,
+        json={"richMenuId": rich_menu_id},
+    )
+
+
+def _ensure_group_dependencies(item: dict[str, Any]) -> None:
+    menu = item["config_snapshot"]
+    group_id = menu.get("menu_group_id")
+    if not group_id or not menu.get("is_group_entry"):
+        return
+    config = read_config("line_menus", LineMenusConfig)
+    dependencies = [
+        other.id
+        for other in config.menus
+        if other.enabled
+        and other.menu_group_id == group_id
+        and other.id != item["menu_config_id"]
+    ]
+    if not dependencies:
+        return
+    placeholders = ",".join(["%s"] * len(dependencies))
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT COUNT(DISTINCT menu_config_id)
+                FROM line_rich_menu_publications
+                WHERE menu_config_id IN ({placeholders})
+                  AND config_revision=%s AND status='published' AND is_current=TRUE
+                """,
+                [*dependencies, item["config_revision"]],
+            )
+            row = cursor.fetchone()
+        count = int(next(iter(row.values()), 0) if isinstance(row, dict) else row[0] if row else 0)
+    finally:
+        conn.close()
+    if count != len(dependencies):
+        raise RichMenuPublishError(
+            "group_dependency_pending",
+            "同組的其他選單頁尚未完成發布",
+            retryable=True,
+        )
+
+
 def _publish_to_line(item: dict[str, Any]) -> tuple[str, int]:
     token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
     if not token or token == "mock_token" or token.startswith("your_"):
@@ -429,6 +534,7 @@ def _publish_to_line(item: dict[str, Any]) -> tuple[str, int]:
             retryable=False,
         )
     menu = item["config_snapshot"]
+    _ensure_group_dependencies(item)
     appearance = menu.get("appearance", {})
     if appearance.get("image_mode", "generated") == "generated":
         if item.get("image_asset_id"):
@@ -468,6 +574,9 @@ def _publish_to_line(item: dict[str, Any]) -> tuple[str, int]:
             headers={"Authorization": f"Bearer {token}", "Content-Type": "image/jpeg"},
             data=image_content,
         )
+        alias_id = (menu.get("rich_menu_alias_id") or "").strip()
+        if alias_id:
+            _upsert_rich_menu_alias(alias_id, created_id, headers)
         if menu.get("set_as_default"):
             _line_request(
                 "POST",
@@ -544,7 +653,11 @@ def _complete_publication(item: dict[str, Any], rich_menu_id: str, asset_id: int
                 """,
                 (rich_menu_id, previous_id, asset_id, item["id"]),
             )
-            if item["audience_role"] in {"staff", "union_staff"}:
+            snapshot = item.get("config_snapshot") or {}
+            should_link_role = (
+                not snapshot.get("menu_group_id") or snapshot.get("is_group_entry")
+            )
+            if item["audience_role"] in {"staff", "union_staff"} and should_link_role:
                 cursor.execute(
                     """
                     SELECT line_user_id FROM line_users
@@ -567,6 +680,9 @@ def _complete_publication(item: dict[str, Any], rich_menu_id: str, asset_id: int
         raise
     finally:
         conn.close()
+    snapshot = item.get("config_snapshot") or {}
+    if snapshot.get("menu_group_id") and not snapshot.get("is_group_entry"):
+        return
     try:
         _write_legacy_id(item["audience_role"], rich_menu_id)
     except OSError as exc:

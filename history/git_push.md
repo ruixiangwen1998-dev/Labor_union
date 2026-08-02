@@ -90,6 +90,40 @@ LINE Monitor
 - migration 已套用開發 DB，未清空既有資料。
 - 未建立或遺留一次性 Python 檔案。
 
+## 2026-08-02 工會人員雙頁 Rich Menu 與管理中心快捷訊息
+
+### 新增功能
+
+- 工會人員 Rich Menu 分為「快捷訊息」與「工會後台」兩頁，使用 Rich Menu Alias 原生切換。
+- LINE 管理中心可把訊息設為「傳給媽媽」、「傳給月嫂」或「群組工具說明」，並調整顯示順序。
+- 工會人員私訊點選分類時，Bot 驗證已綁定身分後送出 Quick Reply；訊息由既有 Worker 任務可靠發送。
+- 新增工會人員 LIFF 安全入口，使用 LINE ID Token 與後台綁定資料確認身分，不把內部 API 金鑰交給瀏覽器。
+
+### 新增檔案
+
+- `line/static/union_staff_portal.html`：工會人員手機 LIFF 功能入口與導覽。
+
+### 主要修改檔案
+
+- `config/line_menu.json`：新增工會人員雙頁選單、Alias、切頁與功能入口按鈕。
+- `config/message_templates.json`：新增媽媽、月嫂及群組工具三類示範快捷訊息。
+- `api/schemas/line_config.py`：驗證快捷分類、雙頁群組、Alias 與 `richmenuswitch` 動作。
+- `services/line_rich_menu_service.py`：群組發布順序、相依檢查、Alias 建立／更新與入口頁綁定。
+- `api/routes/line_rich_menus.py`、`ui/api_clients/line_api_client.py`：新增雙頁群組發布 API 串接。
+- `ui/components/line_rich_menu_manager.py`：編輯切頁按鈕並一次套用同組選單。
+- `ui/components/line_message_manager.py`：以服務人員易懂欄位管理快捷分類及排序。
+- `line/line_bot.py`、`line/worker.py`：工會身分檢查、Quick Reply 任務與複合訊息發送。
+- `line/static/gateway.html`：由既有 LIFF Gateway 導向工會後台入口。
+- `config/README_CONFIG.md`：補充雙頁選單與快捷訊息設定規格。
+- `tests/test_line_rich_menu_management.py`、`tests/test_line_message_management.py`、`tests/test_line_liff_management.py`：新增回歸驗證。
+
+### 驗證結果與範圍
+
+- Rich Menu、訊息管理與 LIFF 目標測試：31 項通過。
+- 擴大 LINE／LIFF／任務／安全回歸：65 項通過；1 項既有監督器測試受本機正常關機標記影響而顯示 maintenance，未擅自刪除該執行狀態。
+- 工會 LIFF 目前完成安全入口和功能導覽；訂單、排休、審查及訊息的詳細資料操作仍待後續串接現有 FastAPI API。
+- 未修改資料庫 Schema，未建立或遺留一次性 Python 檔案。
+
 ## 2026-08-01 工會人員 LINE 與後台帳號安全綁定
 
 ### 新增功能

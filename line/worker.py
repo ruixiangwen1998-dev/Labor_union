@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: line/worker.py
-功能說明: LINE 背景任務 Worker，負責心跳、排程喚醒、任務鎖定、訊息發送、失敗重試與執行紀錄
+功能說明: LINE 背景任務 Worker，負責心跳、排程喚醒、文字／複合訊息發送、重試與執行紀錄
 ================================================================================
 """
 
@@ -146,6 +146,30 @@ def _push_text(task: dict[str, Any], text: str) -> tuple[bool, bool, str, str]:
     return False, response.status_code in RETRYABLE_HTTP, f"http_{response.status_code}", response.text
 
 
+def _push_messages(
+    task: dict[str, Any],
+    messages: list[dict[str, Any]],
+) -> tuple[bool, bool, str, str]:
+    token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "mock_token")
+    if not token or token == "mock_token":
+        print(f"[LINE Mock] Task #{task['id']}: {task['task_type']}")
+        return True, False, "", ""
+    if not messages or len(messages) > 5:
+        return False, False, "invalid_messages", "LINE messages must contain 1 to 5 items"
+    try:
+        response = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            json={"to": task["to_user_id"], "messages": messages},
+            headers=_line_headers(task),
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return False, True, "network_error", str(exc)
+    if response.status_code == 200:
+        return True, False, "", ""
+    return False, response.status_code in RETRYABLE_HTTP, f"http_{response.status_code}", response.text
+
+
 def _rag_answer(user_text: str) -> str:
     fallback = "很抱歉，我不太懂您的意思，已經幫您轉交給行政專員為您人工處理。"
     try:
@@ -192,6 +216,9 @@ def _execute_task(task: dict[str, Any]) -> tuple[bool, bool, str, str]:
     task_type = task["task_type"]
     if task_type == "line_push":
         return _push_text(task, task.get("message_content") or "")
+    if task_type == "line_push_messages":
+        payload = json.loads(task.get("payload_json") or "{}")
+        return _push_messages(task, payload.get("messages") or [])
     if task_type == "rag_reply":
         payload = json.loads(task.get("payload_json") or "{}")
         return _push_text(task, _rag_answer(payload.get("user_text", "")))

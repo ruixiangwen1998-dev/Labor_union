@@ -8,6 +8,7 @@ from PIL import Image
 from api.main import app
 from api.schemas.line_config import LineMenusConfig, RichMenuDefinition
 from services.json_config_service import read_config
+from services.line_rich_menu_service import build_line_action
 from services.media_storage_service import (
     MediaValidationError,
     normalize_uploaded_rich_menu_image,
@@ -18,19 +19,46 @@ from services.media_storage_service import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_three_role_menu_config_and_generated_preview():
+def test_three_role_menu_config_and_union_staff_dual_page_preview():
     config = read_config("line_menus", LineMenusConfig)
     assert {menu.audience_role for menu in config.menus} == {
         "customer",
         "staff",
         "union_staff",
     }
-    union_menu = next(menu for menu in config.menus if menu.audience_role == "union_staff")
-    content = render_rich_menu_image(union_menu.model_dump(mode="json"))
-    with Image.open(io.BytesIO(content)) as image:
-        assert image.size == (2500, 843)
-        assert image.format == "JPEG"
-    assert len(content) <= 1024 * 1024
+    union_menus = [
+        menu for menu in config.menus if menu.audience_role == "union_staff"
+    ]
+    assert len(union_menus) == 2
+    assert {menu.menu_group_id for menu in union_menus} == {"union_staff_workspace"}
+    assert {menu.rich_menu_alias_id for menu in union_menus} == {
+        "union-staff-quick",
+        "union-staff-portal",
+    }
+    assert sum(menu.is_group_entry for menu in union_menus) == 1
+
+    for union_menu in union_menus:
+        content = render_rich_menu_image(union_menu.model_dump(mode="json"))
+        with Image.open(io.BytesIO(content)) as image:
+            assert image.size == (2500, 1686)
+            assert image.format == "JPEG"
+        assert len(content) <= 1024 * 1024
+
+
+def test_rich_menu_switch_action_uses_line_alias():
+    action = build_line_action(
+        {
+            "type": "richmenuswitch",
+            "rich_menu_alias_id": "union-staff-portal",
+            "data": "tab=portal",
+        }
+    )
+
+    assert action == {
+        "type": "richmenuswitch",
+        "richMenuAliasId": "union-staff-portal",
+        "data": "tab=portal",
+    }
 
 
 def test_menu_validation_rejects_overlap_and_unsafe_uri():

@@ -282,6 +282,45 @@
       "usage": [
         "webhook"
       ]
+    },
+    {
+      "id": "union_group_help",
+      "name": "訂單群組操作說明",
+      "category": "customer_service",
+      "message_type": "text",
+      "enabled": true,
+      "content": "訂單服務群組設定方式：\n\n1. 請先建立訂單服務群組。\n2. 將官方 Bot 邀請進群組。\n3. Bot 加入後會自動顯示開始設定入口。\n4. 請在媽媽與月嫂加入前完成訂單綁定及邀請連結登記。",
+      "variables": [],
+      "usage": ["customer_service"],
+      "quick_menu_audience": "group_help",
+      "quick_menu_enabled": true,
+      "quick_menu_order": 10
+    },
+    {
+      "id": "customer_service_confirm",
+      "name": "請媽媽確認服務資訊",
+      "category": "customer_service",
+      "message_type": "text",
+      "enabled": true,
+      "content": "您好，工會已整理好本次服務資訊，請您協助確認；如需調整，請直接聯絡工會人員。",
+      "variables": [],
+      "usage": ["customer_service", "push"],
+      "quick_menu_audience": "customer",
+      "quick_menu_enabled": true,
+      "quick_menu_order": 10
+    },
+    {
+      "id": "staff_case_reminder",
+      "name": "提醒月嫂確認案件",
+      "category": "customer_service",
+      "message_type": "text",
+      "enabled": true,
+      "content": "您好，工會有一筆服務案件需要您確認，請查看案件資訊並回覆是否能夠承接。",
+      "variables": [],
+      "usage": ["customer_service", "push"],
+      "quick_menu_audience": "staff",
+      "quick_menu_enabled": true,
+      "quick_menu_order": 10
     }
   ]
 }

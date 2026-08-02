@@ -1,0 +1,134 @@
+<!doctype html>
+<!--
+================================================================================
+檔案名稱: line/static/union_staff_portal.html
+功能說明: 工會人員手機 LIFF 入口，驗證已綁定 LINE 身分並呈現後台功能導覽
+================================================================================
+-->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>工會後台</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    :root { color-scheme: light; --primary:#047857; --bg:#f3f7f5; --card:#fff; --muted:#64748b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:#16352d; font-family:"Noto Sans TC",system-ui,sans-serif; }
+    main { max-width:720px; margin:auto; padding:24px 18px 40px; }
+    header { margin-bottom:20px; }
+    h1 { margin:0 0 6px; font-size:28px; }
+    #identity { color:var(--muted); font-size:14px; }
+    #notice { padding:14px 16px; border-radius:14px; background:#ecfdf5; margin:16px 0; line-height:1.6; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    button { appearance:none; border:1px solid #dbe8e3; background:var(--card); border-radius:16px; padding:20px 14px; min-height:94px; text-align:left; color:inherit; box-shadow:0 6px 20px rgba(15,80,60,.06); }
+    button.active { border-color:var(--primary); box-shadow:0 0 0 2px rgba(4,120,87,.13); }
+    button strong { display:block; font-size:17px; margin-bottom:6px; }
+    button span { color:var(--muted); font-size:13px; line-height:1.45; }
+    #detail { margin-top:16px; background:#fff; border-radius:16px; padding:18px; line-height:1.65; }
+    .error { background:#fff1f2 !important; color:#9f1239; }
+    @media (max-width:420px) { .grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>工會後台</h1>
+    <div id="identity">正在驗證工會人員身分…</div>
+  </header>
+  <div id="notice">請稍候，正在準備您的工會功能。</div>
+  <section id="menu" class="grid" hidden></section>
+  <section id="detail" hidden></section>
+</main>
+<script>
+  const descriptions = {
+    status: '查看 API、資料庫、Worker 與 LINE 服務狀態。',
+    orders: '搜尋訂單並查看媽媽與月嫂的服務資訊。',
+    schedule: '查看月嫂排休及可服務日期。',
+    reviews: '處理月嫂身分與重新綁定申請。',
+    messages: '選擇訊息範本、訂單與接收對象。'
+  };
+  const params = new URLSearchParams(location.search);
+  const requestedSection = params.get('section') || 'status';
+
+  function showError(message) {
+    const notice = document.getElementById('notice');
+    notice.className = 'error';
+    notice.textContent = message;
+  }
+
+  function selectSection(section) {
+    document.querySelectorAll('#menu button').forEach(button => {
+      button.classList.toggle('active', button.dataset.section === section);
+    });
+    const detail = document.getElementById('detail');
+    detail.hidden = false;
+    detail.replaceChildren();
+    const audience = params.get('audience');
+    const template = params.get('template');
+    const heading = document.createElement('strong');
+    heading.textContent = descriptions[section] || '功能入口';
+    detail.appendChild(heading);
+    if (section === 'messages' && audience) {
+      const selection = document.createElement('p');
+      selection.textContent = `目前已選擇：${audience === 'customer' ? '媽媽' : '月嫂'}訊息${template ? `（範本 ${template}）` : ''}`;
+      detail.appendChild(selection);
+    }
+    const scope = document.createElement('p');
+    scope.textContent = '此頁已完成安全入口與導覽；詳細資料操作將沿用現有 FastAPI 服務逐項接入。';
+    detail.appendChild(scope);
+  }
+
+  async function initialize() {
+    try {
+      const configResponse = await fetch('/api/line/config');
+      if (!configResponse.ok) throw new Error('無法讀取 LIFF 設定');
+      const config = await configResponse.json();
+      let idToken = '';
+      let developmentUserId = params.get('userId') || '';
+      if (config.liff_id) {
+        await liff.init({ liffId: config.liff_id });
+        if (!liff.isLoggedIn()) {
+          liff.login({ redirectUri: location.href });
+          return;
+        }
+        idToken = liff.getIDToken() || '';
+        const profile = await liff.getProfile();
+        developmentUserId = profile.userId;
+      }
+      const response = await fetch('/api/line/union-staff-portal/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          line_id_token: idToken,
+          development_line_user_id: developmentUserId
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || '工會人員身分驗證失敗');
+      document.getElementById('identity').textContent = `${payload.profile.display_name}｜${payload.profile.role}`;
+      document.getElementById('notice').textContent = '身分驗證成功。請選擇要使用的功能。';
+      const menu = document.getElementById('menu');
+      payload.sections.filter(item => item.enabled).forEach(item => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.section = item.id;
+        const title = document.createElement('strong');
+        title.textContent = item.label;
+        const description = document.createElement('span');
+        description.textContent = descriptions[item.id] || '';
+        button.append(title, description);
+        button.addEventListener('click', () => selectSection(item.id));
+        menu.appendChild(button);
+      });
+      menu.hidden = false;
+      selectSection(requestedSection);
+    } catch (error) {
+      console.error(error);
+      showError(error.message || '無法開啟工會後台，請重新從 LINE 選單進入。');
+    }
+  }
+  initialize();
+</script>
+</body>
+</html>

@@ -172,18 +172,34 @@
         const direct = new URLSearchParams(window.location.search);
         let target = direct.get('target') || '';
         let token = direct.get('token') || '';
+        let section = direct.get('section') || '';
+        let audience = direct.get('audience') || '';
+        let template = direct.get('template') || '';
         const state = direct.get('liff.state');
         if (state) {
             const stateUrl = new URL(state, window.location.origin);
             target = stateUrl.searchParams.get('target') || target;
             token = stateUrl.searchParams.get('token') || token;
+            section = stateUrl.searchParams.get('section') || section;
+            audience = stateUrl.searchParams.get('audience') || audience;
+            template = stateUrl.searchParams.get('template') || template;
         }
-        return { target, token };
+        return { target, token, section, audience, template };
     }
 
     function redirectRequestedPage() {
         const request = getGatewayRequest();
-        if (!['staff-verification', 'union-staff-binding'].includes(request.target)) return false;
+        if (!['staff-verification', 'union-staff-binding', 'union-staff-portal'].includes(request.target)) return false;
+        if (request.target === 'union-staff-portal') {
+            const params = new URLSearchParams({
+                section: request.section || 'status',
+                viaLiff: '1'
+            });
+            if (request.audience) params.set('audience', request.audience);
+            if (request.template) params.set('template', request.template);
+            window.location.replace(`/union-staff-portal-page?${params.toString()}`);
+            return true;
+        }
         if (!request.token) throw new Error('驗證連結缺少申請憑證');
         const params = new URLSearchParams({
             token: request.token,
