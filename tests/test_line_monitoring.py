@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -33,9 +34,16 @@ from services.runtime_supervision_service import (
     intentional_shutdown_requested,
     mark_intentional_shutdown,
 )
+import services.runtime_supervision_service as runtime_supervision_service
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def _isolate_runtime_shutdown_markers(monkeypatch, tmp_path):
+    """Never let monitoring tests consume or modify live supervisor markers."""
+    monkeypatch.setattr(runtime_supervision_service, "STATE_DIR", tmp_path)
 
 
 def _cleanup(check_name: str, instance_id: str | None = None) -> None:

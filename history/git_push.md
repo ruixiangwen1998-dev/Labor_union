@@ -92,6 +92,8 @@ LINE Monitor
 
 ## 2026-08-02 工會人員雙頁 Rich Menu 與管理中心快捷訊息
 
+對應提交：`c3bcdf0 feat: add union staff rich menu workspace`
+
 ### 新增功能
 
 - 工會人員 Rich Menu 分為「快捷訊息」與「工會後台」兩頁，使用 Rich Menu Alias 原生切換。
@@ -116,6 +118,7 @@ LINE Monitor
 - `line/static/gateway.html`：由既有 LIFF Gateway 導向工會後台入口。
 - `config/README_CONFIG.md`：補充雙頁選單與快捷訊息設定規格。
 - `tests/test_line_rich_menu_management.py`、`tests/test_line_message_management.py`、`tests/test_line_liff_management.py`：新增回歸驗證。
+- `.gitignore`：納入工作區既有異動，不再忽略 `start.bat`，讓團隊可同步一鍵啟動檔。
 
 ### 驗證結果與範圍
 
@@ -182,4 +185,30 @@ LINE Monitor
 - 本機 `union_db` 已使用固定 v3 fixture 成功完整重建。
 - 監控／migration／DB 重建目標測試：20 項通過。
 - 完整測試：1569 項通過，0 項失敗，6 個既有棄用警告。
+- 未建立或遺留一次性 Python 檔案。
+
+## 2026-08-02 開發服務監督器中斷判定修正
+
+### 功能修正
+
+- FastAPI、ngrok 與 Streamlit 在 Windows 使用獨立 process group，避免子程序 reload 或控制事件波及 supervisor。
+- `KeyboardInterrupt` 不再直接宣稱使用者按下 Ctrl+C；改為記錄 UTC 時間、PID、父 PID 與來源未確認提示。
+- 只有操作人明確輸入 `y` 才寫入 `development_supervisor` 正常關閉標記；未確認中斷不抑制 Monitor 救援，並於 1 秒後重建受管服務。
+- 保留 Streamlit 預設自動開啟瀏覽器行為，關閉瀏覽器分頁不作為伺服器停止條件。
+- 監控測試的 shutdown marker 改用 pytest 臨時目錄，避免讀寫實際運行狀態。
+- 更新工會人員 Rich Menu 已發布 ID，並補齊前次 Rich Menu 提交紀錄。
+
+### 本次修改檔案
+
+- `start_fastapi_ngrok.py`：子程序群組隔離、人工停止確認、未確認中斷恢復與診斷輸出。
+- `tests/test_development_supervisor_interrupt_handling.py`：新增程序群組、瀏覽器行為及中斷分類回歸測試。
+- `tests/test_line_monitoring.py`：隔離測試用正常關閉標記。
+- `config/rich_menu_ids.json`：記錄工會人員目前 Rich Menu ID。
+- `history/git_push.md`：更新本次提交與前次 Rich Menu 紀錄。
+
+### 驗證結果
+
+- Supervisor／LINE Monitor 針對性測試：16 項通過。
+- 完整測試：1582 項通過，0 項失敗，6 個既有棄用警告。
+- 未加入 Streamlit `--server.headless true`，啟動後仍會自動開啟瀏覽器供本機測試。
 - 未建立或遺留一次性 Python 檔案。

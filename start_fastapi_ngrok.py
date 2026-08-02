@@ -64,6 +64,13 @@ def _prepare_development_review_auth() -> None:
 _prepare_development_review_auth()
 
 
+def _managed_child_creation_kwargs() -> dict[str, object]:
+    """Isolate child services from console interrupts sent to the supervisor."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 def _resolve_ngrok() -> str:
     executable = shutil.which("ngrok")
     if executable:
@@ -85,6 +92,7 @@ def run_ngrok() -> subprocess.Popen[str]:
         errors="replace",
         bufsize=1,
         shell=False,
+        **_managed_child_creation_kwargs(),
     )
 
 
@@ -104,6 +112,7 @@ def run_fastapi() -> subprocess.Popen[bytes]:
         ],
         cwd=PROJECT_ROOT,
         shell=False,
+        **_managed_child_creation_kwargs(),
     )
 
 
@@ -131,6 +140,7 @@ def run_streamlit() -> subprocess.Popen[bytes]:
         ],
         cwd=PROJECT_ROOT,
         shell=False,
+        **_managed_child_creation_kwargs(),
     )
 
 
@@ -826,15 +836,50 @@ def _run_supervised_session() -> None:
                 _terminate_process_tree(service.process, service.display_name)
 
 
+def _confirm_intentional_shutdown() -> bool:
+    """Require an explicit operator confirmation before suppressing peer recovery."""
+    if not sys.stdin or not sys.stdin.isatty():
+        return False
+    try:
+        answer = input(
+            "\n[CONFIRM] Supervisor 收到 Console Interrupt。"
+            "若這是你主動停止，請輸入 y；其他情況將自動恢復服務 [y/N]："
+        )
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer.strip().lower() in {"y", "yes"}
+
+
+def _print_interrupt_diagnostics() -> None:
+    """Log facts without claiming that a physical Ctrl+C keypress occurred."""
+    print(
+        "[INTERRUPT] Supervisor 收到 Windows Console Interrupt；"
+        "來源可能是鍵盤、終端、父程序或程序控制事件，尚未確認。"
+    )
+    print(
+        "[INTERRUPT] "
+        f"time={datetime.now(timezone.utc).isoformat()} "
+        f"pid={os.getpid()} parent_pid={os.getppid()}"
+    )
+
+
 def _main_loop() -> int:
     while True:
         try:
             _run_supervised_session()
             return 0
         except KeyboardInterrupt:
-            print("\n[STOP] 收到 Ctrl+C，LINE Bot 開發環境已正常關閉。")
-            mark_intentional_shutdown("development_supervisor")
-            return 0
+            _print_interrupt_diagnostics()
+            if _confirm_intentional_shutdown():
+                mark_intentional_shutdown("development_supervisor")
+                print("[STOP] 使用者已確認主動關閉，LINE Bot 開發環境已正常停止。")
+                return 0
+            print(
+                "[RECOVERY] 此次中斷未經使用者確認，不寫入正常關閉標記；"
+                "1 秒後重新建立受管服務。"
+            )
+            time.sleep(1)
+            continue
         except (ServiceFailure, FileNotFoundError) as exc:
             message = str(exc)
             print(f"[ERROR] {message}")
