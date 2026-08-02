@@ -294,4 +294,21 @@ GET /api/v1/line/monitoring/status
 GET /api/v1/line/monitoring/events
 ```
 
-兩者都需要內部 API Key 與管理員權限。管理中心只讀取 Monitor 已保存的結果，不會因打開頁面才開始逐項檢查，也沒有固定前端輪詢。本階段只建立異常事件，不會傳送 LINE 警報；通知指定工會人員或群組屬於後續任務。
+兩者都需要內部 API Key 與管理員權限。管理中心只讀取 Monitor 已保存的結果，不會因打開頁面才開始逐項檢查，也沒有固定前端輪詢。
+
+Monitor 會依 config/line_alert_notifications.json 將 service_monitor_alerts 的嚴重異常、
+升級、持續提醒與恢復狀態轉成可靠派送紀錄，再直接呼叫 LINE Push API。這段不經過
+FastAPI 內的 Worker，因此 FastAPI 或 Worker 本身中斷時，Monitor 仍可發出通知；
+LINE API 暫時失敗時會以相同 X-Line-Retry-Key 進行退避重試。
+
+通知對象保存於 line_alert_notification_targets，派送紀錄保存於
+line_alert_deliveries。個人通知只能選擇已綁定 LINE 的 admin_users。群組通知不讓
+管理介面手動貼入 groupId；先將官方 Bot 邀請進群組，再由已綁定的 line_manager
+或 system_admin 在群組輸入「綁定異常通知群組」或「解除異常通知群組」。
+
+管理 API 位於 /api/v1/line/alert-notifications，包含設定、通知對象、測試發送與
+派送紀錄。讀取至少需要 line_viewer；修改、刪除及測試需要 line_manager。
+
+若 MySQL 正在故障，Monitor 會改讀 .monitor_state/line_alert_targets.json 的最近一次
+通知對象快取，並以 .monitor_state/line_alert_fallback_state.json 防止每 15 秒重複
+傳送相同 DB 異常。快取只保存 LINE 目的地與通知偏好，不保存密碼、Token 或會員個資。

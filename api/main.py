@@ -30,6 +30,7 @@ from api.routes import (
     holidays,
     line_admin,
     line_admin_binding,
+    line_alert_notifications,
     line_monitoring,
     line_rich_menus,
     line_reviews,
@@ -108,6 +109,7 @@ app.include_router(line_router)
 app.include_router(admin_auth.router)
 app.include_router(line_admin.router)
 app.include_router(line_admin_binding.router)
+app.include_router(line_alert_notifications.router)
 app.include_router(line_monitoring.router)
 app.include_router(line_tasks.router)
 app.include_router(line_rich_menus.router)
@@ -140,31 +142,6 @@ app.include_router(finance_alerts.router)
 app.include_router(data_browser_admin.router)
 app.include_router(system_alerts.router)
 
-
-
-@app.middleware("http")
-async def audit_authenticated_mutations(request: Request, call_next):
-    """Persist authenticated management changes without storing request secrets."""
-    response = await call_next(request)
-    principal = getattr(request.state, "admin_principal", None)
-    is_preview = request.url.path.endswith("/preview")
-    if principal and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not is_preview:
-        try:
-            await asyncio.to_thread(
-                record_admin_audit,
-                principal=principal,
-                action=getattr(request.state, "audit_action", "api.mutation"),
-                request_path=request.url.path,
-                http_method=request.method,
-                result_status=response.status_code,
-                ip_address=request.client.host if request.client else None,
-                resource_type=getattr(request.state, "audit_resource_type", None),
-                resource_id=getattr(request.state, "audit_resource_id", None),
-                details=getattr(request.state, "audit_details", None),
-            )
-        except Exception as exc:
-            print(f"[Admin Audit] Failed to record request: {exc}")
-    return response
 
 
 @app.middleware("http")

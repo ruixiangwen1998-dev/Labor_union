@@ -47,6 +47,7 @@ MONITOR_SNAPSHOT_PATH = PROJECT_ROOT / ".monitor_state" / "line_health.json"
 SERVICE_CHECK_INTERVAL_SECONDS = 2.0
 SERVICE_HEALTH_FAILURE_THRESHOLD = 3
 SERVICE_RESTART_DELAYS_SECONDS = (1, 3, 10)
+MONITOR_STARTUP_DISCOVERY_SECONDS = 20
 os.chdir(PROJECT_ROOT)
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -398,6 +399,23 @@ def _restart_monitor_peer(service: ManagedService, reason: str) -> None:
     _restart_service(service, reason)
 
 
+def _ensure_monitor_peer(service: ManagedService) -> None:
+    """Consume stale stop intent and ensure this new full-stack session has a Monitor."""
+    was_intentionally_stopped = intentional_shutdown_requested("line_monitor")
+    clear_intentional_shutdown("line_monitor")
+    service.started_at = time.time()
+    if was_intentionally_stopped:
+        _restart_monitor_peer(service, "新服務工作階段要求重新啟用 Monitor")
+        return
+
+    ready, message = _wait_until_service_ready(service)
+    if not ready:
+        print(f"[WARNING] LINE 主動監控尚未就緒：{message}")
+        _restart_monitor_peer(service, message)
+    else:
+        print(f"[READY] LINE 主動監控：{message}")
+
+
 class DevLineConsoleReviewer:
     """Non-blocking y/n reviewer for all LINE confirmation requests."""
 
@@ -735,7 +753,12 @@ def _run_supervised_session() -> None:
         "fastapi": ManagedService("fastapi", "FastAPI", run_fastapi, 30),
         "streamlit": ManagedService("streamlit", "Streamlit", run_streamlit, 40),
     }
-    monitor_peer = ManagedService("monitor", "LINE 主動監控", run_monitor, 75)
+    monitor_peer = ManagedService(
+        "monitor",
+        "LINE 主動監控",
+        run_monitor,
+        MONITOR_STARTUP_DISCOVERY_SECONDS,
+    )
     line_reviewer = DevLineConsoleReviewer()
     review_notifier = DevReviewNotificationServer(line_reviewer)
     active_public_url = ""
@@ -763,12 +786,7 @@ def _run_supervised_session() -> None:
                 # Children launched afterwards inherit the currently active dev URL.
                 os.environ["BASE_URL"] = active_public_url
 
-        monitor_ready, monitor_message = _wait_until_service_ready(monitor_peer)
-        if not monitor_ready:
-            print(f"[WARNING] LINE 主動監控尚未就緒：{monitor_message}")
-            _restart_monitor_peer(monitor_peer, monitor_message)
-        else:
-            print(f"[READY] LINE 主動監控：{monitor_message}")
+        _ensure_monitor_peer(monitor_peer)
 
         _print_urls(active_public_url)
         # Recover requests left pending before this development session once only.

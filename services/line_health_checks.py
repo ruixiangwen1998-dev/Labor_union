@@ -96,6 +96,8 @@ REQUIRED_MONITORING_SCHEMA = {
     "service_monitor_alerts": {"event_type"},
     "service_heartbeats": {"service_name"},
     "system_health_status": {"check_name"},
+    "line_alert_notification_targets": {"target_type", "enabled"},
+    "line_alert_deliveries": {"status", "idempotency_key"},
 }
 
 
@@ -373,7 +375,15 @@ def check_liff(_settings: dict[str, Any]) -> HealthCheckResult:
 
 
 def check_config(_settings: dict[str, Any]) -> HealthCheckResult:
-    files = ["message_templates.json", "message_schedules.json", "line_menu.json", "liff_settings.json", "customer_service.json", "line_monitoring.json"]
+    files = [
+        "message_templates.json",
+        "message_schedules.json",
+        "line_menu.json",
+        "liff_settings.json",
+        "customer_service.json",
+        "line_monitoring.json",
+        "line_alert_notifications.json",
+    ]
     errors: list[str] = []
     for filename in files:
         path = PROJECT_ROOT / "config" / filename

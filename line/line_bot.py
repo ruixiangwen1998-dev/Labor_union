@@ -46,6 +46,12 @@ from services.line_admin_binding_service import (
     build_line_admin_binding_url,
     issue_line_admin_binding_token,
 )
+from services.line_alert_notification_service import (
+    AlertNotificationPermissionError,
+    bind_notification_group,
+    disable_notification_group,
+    unbind_notification_group,
+)
 
 # 載入環境變數
 load_dotenv()
@@ -959,6 +965,28 @@ async def line_webhook(request: Request):
                             """,
                             (user_id,),
                         )
+
+                elif event_type == "join":
+                    source = event.get("source", {})
+                    group_id = source.get("groupId", "")
+                    if group_id:
+                        enqueue_line_task(
+                            cursor,
+                            to_user_id=group_id,
+                            message_content=(
+                                "官方 Bot 已加入群組。\n"
+                                "若要把本群組設為系統異常通知群組，請由 LINE 主管或系統管理員輸入：\n"
+                                "綁定異常通知群組"
+                            ),
+                            source_event_id=event.get("webhookEventId"),
+                            idempotency_key=f"alert-group-join:{event.get('webhookEventId') or group_id}",
+                        )
+
+                elif event_type == "leave":
+                    source = event.get("source", {})
+                    group_id = source.get("groupId", "")
+                    if group_id:
+                        disable_notification_group(cursor, group_id)
                 
                 elif event_type == "postback":
                     postback_data = event["postback"].get("data", "")
@@ -1071,6 +1099,51 @@ async def line_webhook(request: Request):
                         user_id = source.get("userId", "")
                         reply_token = event.get("replyToken", "")
                         print(f"[LINE Webhook] Text message received from {user_id}: {user_text}")
+
+                        command = user_text.strip()
+                        group_id = source.get("groupId", "")
+                        if command in {"綁定異常通知群組", "解除異常通知群組"}:
+                            if not group_id:
+                                enqueue_line_task(
+                                    cursor,
+                                    to_user_id=user_id,
+                                    message_content="此指令只能在要設定的 LINE 群組中使用。",
+                                    source_event_id=event.get("webhookEventId"),
+                                    idempotency_key=f"alert-group-private:{event.get('webhookEventId')}",
+                                )
+                                continue
+                            try:
+                                if command == "綁定異常通知群組":
+                                    bind_notification_group(
+                                        cursor,
+                                        group_id=group_id,
+                                        actor_line_user_id=user_id,
+                                    )
+                                    response_text = (
+                                        "系統異常通知群組綁定完成。\n"
+                                        "預設只發送嚴重異常及恢復通知，可至 LINE 管理中心調整。"
+                                    )
+                                else:
+                                    changed = unbind_notification_group(
+                                        cursor,
+                                        group_id=group_id,
+                                        actor_line_user_id=user_id,
+                                    )
+                                    response_text = (
+                                        "已停止向本群組發送系統異常通知。"
+                                        if changed
+                                        else "本群組目前不是啟用中的異常通知群組。"
+                                    )
+                            except AlertNotificationPermissionError as exc:
+                                response_text = str(exc)
+                            enqueue_line_task(
+                                cursor,
+                                to_user_id=group_id,
+                                message_content=response_text,
+                                source_event_id=event.get("webhookEventId"),
+                                idempotency_key=f"alert-group-command:{event.get('webhookEventId')}",
+                            )
+                            continue
 
                         cursor.execute("SELECT role FROM line_users WHERE line_user_id=%s", (user_id,))
                         role_row = cursor.fetchone()

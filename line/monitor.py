@@ -11,6 +11,7 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,6 +21,11 @@ from services.line_monitor_service import (
     load_monitoring_config,
     record_supervisor_event,
     run_monitor_cycle,
+)
+from services.line_alert_notification_service import (
+    process_due_alert_deliveries,
+    process_snapshot_fallback_notifications,
+    stage_monitor_alert_deliveries,
 )
 from services.runtime_supervision_service import (
     SingleInstanceLock,
@@ -35,6 +41,7 @@ from services.runtime_supervision_service import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 _running = True
+_received_signal: int | None = None
 SUPERVISOR_RESTART_GRACE_SECONDS = 45
 MAX_SUPERVISOR_RESTART_ATTEMPTS = 3
 MANAGED_PROCESS_SIGNATURES = {
@@ -44,9 +51,59 @@ MANAGED_PROCESS_SIGNATURES = {
 }
 
 
-def _stop(_signum=None, _frame=None) -> None:
-    global _running
+def _stop(signum=None, _frame=None) -> None:
+    global _received_signal, _running
+    _received_signal = signum
     _running = False
+
+
+def _confirm_intentional_shutdown() -> bool:
+    """Only explicit operator confirmation may suppress peer recovery."""
+    if not sys.stdin or not sys.stdin.isatty():
+        return False
+    try:
+        answer = input(
+            "\n[LINE Monitor][CONFIRM] 收到 Console Interrupt。"
+            "若這是你主動停止，請輸入 y；其他情況將繼續監控 [y/N]："
+        )
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer.strip().lower() in {"y", "yes"}
+
+
+def _print_signal_diagnostics(signum: int | None) -> None:
+    signal_name = "unknown"
+    if signum is not None:
+        try:
+            signal_name = signal.Signals(signum).name
+        except ValueError:
+            signal_name = str(signum)
+    print(
+        "[LINE Monitor][INTERRUPT] "
+        f"signal={signal_name} time={datetime.now(timezone.utc).isoformat()} "
+        f"pid={os.getpid()} parent_pid={os.getppid()}；來源尚未確認。"
+    )
+
+
+def _handle_stop_request(signum: int | None) -> tuple[bool, int]:
+    """Return (continue_monitoring, exit_code) without mislabeling external stops."""
+    _print_signal_diagnostics(signum)
+    if signum == signal.SIGINT:
+        if _confirm_intentional_shutdown():
+            mark_intentional_shutdown("line_monitor")
+            print("[LINE Monitor][STOP] 使用者已確認主動關閉 Monitor。")
+            return False, 0
+        print(
+            "[LINE Monitor][RECOVERY] 中斷未經使用者確認，不寫入正常關閉標記；"
+            "繼續執行監控。"
+        )
+        return True, 0
+    print(
+        "[LINE Monitor][ERROR] 收到外部終止訊號，不寫入正常關閉標記；"
+        "交由服務監督器判定並恢復。",
+        file=sys.stderr,
+    )
+    return False, 1
 
 
 def _failure_popup_enabled() -> bool:
@@ -138,6 +195,9 @@ def _restart_development_supervisor(attempt: int) -> None:
 
 
 def _main_loop() -> int:
+    global _received_signal, _running
+    _running = True
+    _received_signal = None
     signal.signal(signal.SIGINT, _stop)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _stop)
@@ -150,6 +210,25 @@ def _main_loop() -> int:
     while _running:
         try:
             snapshot, last_run = run_monitor_cycle(last_run)
+            try:
+                staged = stage_monitor_alert_deliveries()
+                delivered = process_due_alert_deliveries()
+                if staged or delivered:
+                    print(
+                        f"[LINE Monitor] 異常通知：新增 {staged} 筆，處理 {delivered} 筆"
+                    )
+            except Exception as notification_exc:
+                print(
+                    f"[LINE Monitor] DB 通知派送暫時不可用，改用本機快取：{notification_exc}",
+                    file=sys.stderr,
+                )
+                try:
+                    process_snapshot_fallback_notifications(snapshot)
+                except Exception as fallback_exc:
+                    print(
+                        f"[LINE Monitor] 本機快取通知也失敗：{fallback_exc}",
+                        file=sys.stderr,
+                    )
             if snapshot["overall_status"] != previous_overall:
                 print(f"[LINE Monitor] {snapshot['generated_at']} overall={snapshot['overall_status']}")
                 previous_overall = snapshot["overall_status"]
@@ -201,9 +280,11 @@ def _main_loop() -> int:
             if not _running:
                 break
             time.sleep(1)
+    continue_monitoring, exit_code = _handle_stop_request(_received_signal)
+    if continue_monitoring:
+        return _main_loop()
     print("[LINE Monitor] 主動監控程序已停止")
-    mark_intentional_shutdown("line_monitor")
-    return 0
+    return exit_code
 
 
 def main() -> int:

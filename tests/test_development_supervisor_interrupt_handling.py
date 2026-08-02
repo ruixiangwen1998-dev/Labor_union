@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+import signal
 
 import start_fastapi_ngrok as launcher
+import line.monitor as monitor
 
 
 class _ProcessStub:
@@ -94,3 +96,80 @@ def test_noninteractive_interrupt_cannot_claim_intentional_shutdown(monkeypatch)
     monkeypatch.setattr(launcher.sys, "stdin", _NonInteractiveInput())
 
     assert launcher._confirm_intentional_shutdown() is False
+
+
+def test_new_supervisor_session_consumes_stale_monitor_shutdown_marker(monkeypatch):
+    service = launcher.ManagedService("monitor", "LINE 主動監控", launcher.run_monitor, 20)
+    cleared = []
+    restarted = []
+
+    monkeypatch.setattr(launcher, "intentional_shutdown_requested", lambda _name: True)
+    monkeypatch.setattr(launcher, "clear_intentional_shutdown", cleared.append)
+    monkeypatch.setattr(
+        launcher,
+        "_restart_monitor_peer",
+        lambda target, reason: restarted.append((target, reason)),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_wait_until_service_ready",
+        lambda _service: (_ for _ in ()).throw(AssertionError("不應等待 stale marker")),
+    )
+
+    launcher._ensure_monitor_peer(service)
+
+    assert cleared == ["line_monitor"]
+    assert restarted and restarted[0][0] is service
+    assert service.started_at > 0
+
+
+def test_missing_monitor_is_started_after_short_discovery_window(monkeypatch):
+    service = launcher.ManagedService("monitor", "LINE 主動監控", launcher.run_monitor, 20)
+    restarted = []
+
+    monkeypatch.setattr(launcher, "intentional_shutdown_requested", lambda _name: False)
+    monkeypatch.setattr(launcher, "clear_intentional_shutdown", lambda _name: None)
+    monkeypatch.setattr(
+        launcher,
+        "_wait_until_service_ready",
+        lambda _service: (False, "尚未產生本次程序的健康快照"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_restart_monitor_peer",
+        lambda target, reason: restarted.append((target, reason)),
+    )
+
+    launcher._ensure_monitor_peer(service)
+
+    assert restarted == [(service, "尚未產生本次程序的健康快照")]
+    assert service.ready_timeout_seconds == launcher.MONITOR_STARTUP_DISCOVERY_SECONDS
+
+
+def test_monitor_unconfirmed_sigint_continues_without_shutdown_marker(monkeypatch):
+    marked = []
+    monkeypatch.setattr(monitor, "_confirm_intentional_shutdown", lambda: False)
+    monkeypatch.setattr(monitor, "_print_signal_diagnostics", lambda _signum: None)
+    monkeypatch.setattr(monitor, "mark_intentional_shutdown", marked.append)
+
+    assert monitor._handle_stop_request(signal.SIGINT) == (True, 0)
+    assert marked == []
+
+
+def test_monitor_confirmed_sigint_marks_intentional_shutdown(monkeypatch):
+    marked = []
+    monkeypatch.setattr(monitor, "_confirm_intentional_shutdown", lambda: True)
+    monkeypatch.setattr(monitor, "_print_signal_diagnostics", lambda _signum: None)
+    monkeypatch.setattr(monitor, "mark_intentional_shutdown", marked.append)
+
+    assert monitor._handle_stop_request(signal.SIGINT) == (False, 0)
+    assert marked == ["line_monitor"]
+
+
+def test_monitor_sigterm_is_external_failure_without_shutdown_marker(monkeypatch):
+    marked = []
+    monkeypatch.setattr(monitor, "_print_signal_diagnostics", lambda _signum: None)
+    monkeypatch.setattr(monitor, "mark_intentional_shutdown", marked.append)
+
+    assert monitor._handle_stop_request(signal.SIGTERM) == (False, 1)
+    assert marked == []

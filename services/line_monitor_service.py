@@ -460,7 +460,19 @@ def get_monitoring_overview() -> dict[str, Any]:
             stale = (_utc_now_naive() - datetime.fromisoformat(generated)).total_seconds() > 90
         except ValueError:
             pass
-    return {**snapshot, "monitor_stale": stale}
+    normalized_checks = {
+        name: {
+            **check,
+            "details": check.get("details") or {},
+        }
+        for name, check in (snapshot.get("checks") or {}).items()
+        if isinstance(check, dict)
+    }
+    return {
+        **snapshot,
+        "checks": normalized_checks,
+        "monitor_stale": stale,
+    }
 
 
 def list_monitoring_events(limit: int = 100) -> list[dict[str, Any]]:

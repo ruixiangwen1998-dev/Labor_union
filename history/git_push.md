@@ -187,6 +187,40 @@ LINE Monitor
 - 完整測試：1569 項通過，0 項失敗，6 個既有棄用警告。
 - 未建立或遺留一次性 Python 檔案。
 
+## 2026-08-02 系統異常主動通知
+
+### 新增功能
+
+- Monitor 主動把嚴重異常、異常升級、持續提醒與恢復訊息傳給指定工會人員或 LINE 群組。
+- 工會 LINE 主管／系統管理員可在群組輸入「綁定異常通知群組」完成 groupId 安全綁定，不需在後台手動貼工程識別碼。
+- LINE 管理中心可設定通知等級、恢復提醒、重複提醒間隔、元件開關、個人通知對象，並測試發送及查看派送結果。
+- LINE API 暫時失敗會使用固定 Retry Key 退避重試；MySQL 故障時由 Monitor 使用本機目標快取送出 DB 異常與恢復通知。
+
+### 新增檔案
+
+- services/line_alert_notification_service.py：通知對象、事件轉換、去重、派送、重試與 DB 故障備援。
+- api/routes/line_alert_notifications.py、api/schemas/line_alert_notifications.py：通知管理 API 與輸入驗證。
+- ui/components/line_alert_notification_manager.py：服務人員可操作的通知規則、對象、測試及紀錄介面。
+- config/line_alert_notifications.json：通知等級、恢復、提醒、重試與元件開關。
+- db/schema_parts/106_line_alert_notifications.sql：通知對象與可靠派送 migration。
+- tests/test_line_alert_notifications.py：權限、資料格式、冪等派送、指定測試與 DB 故障備援測試。
+
+### 主要修改檔案
+
+- line/monitor.py：每次監控週期分派 LINE 異常通知；DB 無法使用時切換本機快取。
+- line/line_bot.py：Bot join／leave 事件及群組綁定／解除指令。
+- api/main.py：掛載通知 API，並移除重複的稽核 middleware。
+- services/line_health_checks.py、services/line_monitor_service.py：監控新 Schema／設定檔並修正空 details 導致的 API 500。
+- ui/api_clients/line_api_client.py、ui/pages/07_line_management.py：串接管理 API 與使用狀態頁。
+- db/schema.sql、config/README_CONFIG.md、services/json_config_service.py：加入資料表、設定註冊及操作說明。
+
+### 驗證結果
+
+- 開發 DB 已套用 migration，未清空或重建假資料。
+- 通知與監控整合測試：20 項通過；擴大 LINE／權限／任務／LIFF 回歸：63 項通過。
+- 含 Monitor 啟動與中斷修正的完整測試：1596 項通過，0 項失敗，6 個既有棄用警告。
+- 未建立或遺留一次性 Python 檔案。
+
 ## 2026-08-02 開發服務監督器中斷判定修正
 
 ### 功能修正
@@ -211,4 +245,27 @@ LINE Monitor
 - Supervisor／LINE Monitor 針對性測試：16 項通過。
 - 完整測試：1582 項通過，0 項失敗，6 個既有棄用警告。
 - 未加入 Streamlit `--server.headless true`，啟動後仍會自動開啟瀏覽器供本機測試。
+- 未建立或遺留一次性 Python 檔案。
+
+## 2026-08-02 Monitor 自動帶起與關閉判定修正
+
+### 功能修正
+
+- 新的 supervisor 工作階段會消耗上一輪 `line_monitor.shutdown`，避免不存在的 Monitor 被舊 marker 誤判為健康。
+- Monitor 健康檢查以本次工作階段啟動時間為基準，不再接受上一輪殘留快照。
+- 找不到 Monitor 時的探索等待由 75 秒縮短為 20 秒；已知存在正常關閉 marker 時直接補啟動。
+- Monitor 收到 SIGINT 時要求操作人輸入 `y`，只有確認後才寫入正常關閉 marker。
+- 未確認 SIGINT 會繼續監控；SIGTERM 視為外部異常終止，以非零狀態結束且不寫正常關閉 marker，交由 supervisor 恢復。
+- Monitor 中斷紀錄新增 signal、UTC 時間、PID 與父 PID，避免把控制事件誤稱為人工 Ctrl+C。
+
+### 本次修改檔案
+
+- `start_fastapi_ngrok.py`：清除 stale Monitor marker、建立本次快照時間基準並縮短缺少 Monitor 的探索時間。
+- `line/monitor.py`：分流 SIGINT／SIGTERM、加入人工確認與中斷診斷。
+- `tests/test_development_supervisor_interrupt_handling.py`：新增 stale marker、缺少 Monitor、SIGINT 與 SIGTERM 回歸測試。
+
+### 驗證結果
+
+- Supervisor／LINE Monitor 針對性測試：21 項通過。
+- 完整測試：1596 項通過，0 項失敗，6 個既有棄用警告。
 - 未建立或遺留一次性 Python 檔案。

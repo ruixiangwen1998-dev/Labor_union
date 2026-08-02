@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "enabled": true,
+  "minimum_severity": "critical",
+  "notify_recovery": true,
+  "repeat_after_minutes": 60,
+  "max_retries": 5,
+  "retry_base_seconds": 30,
+  "components": {
+    "api": true,
+    "database": true,
+    "database_schema": true,
+    "worker": true,
+    "development_supervisor": true,
+    "task_queue": true,
+    "line_api": true,
+    "public_endpoint": true,
+    "liff": true,
+    "config": true,
+    "storage": true
+  }
+}

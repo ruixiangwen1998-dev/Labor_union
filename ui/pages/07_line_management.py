@@ -16,6 +16,7 @@ from ui.components.line_rich_menu_manager import render_rich_menu_manager
 from ui.components.line_schedule_manager import render_schedule_manager
 from ui.components.line_task_manager import render_task_manager
 from ui.components.line_health_monitor import render_line_health_monitor
+from ui.components.line_alert_notification_manager import render_alert_notification_manager
 from ui.api_clients.line_api_client import LineAdminApiClient, LineAdminApiError
 
 
@@ -73,6 +74,7 @@ def _overview(
         return
 
     render_line_health_monitor(monitoring, monitoring_events)
+    render_alert_notification_manager(client, token, profile)
 
     if profile.get("role") == "system_admin":
         with st.expander("系統管理資訊"):

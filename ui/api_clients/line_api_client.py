@@ -150,6 +150,87 @@ class LineAdminApiClient:
             params={"limit": limit},
         )
 
+    def alert_notification_config(self, token: str | None) -> dict[str, Any]:
+        return self._request(
+            "GET", "/api/v1/line/alert-notifications/config", token=token
+        )
+
+    def update_alert_notification_config(
+        self,
+        token: str | None,
+        payload: dict[str, Any],
+        *,
+        revision: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            "/api/v1/line/alert-notifications/config",
+            token=token,
+            json=payload,
+            extra_headers={"If-Match": revision},
+        )
+
+    def alert_notification_targets(self, token: str | None) -> list[dict[str, Any]]:
+        return self._request(
+            "GET", "/api/v1/line/alert-notifications/targets", token=token
+        )
+
+    def alert_notification_available_admins(
+        self, token: str | None
+    ) -> list[dict[str, Any]]:
+        return self._request(
+            "GET", "/api/v1/line/alert-notifications/available-admins", token=token
+        )
+
+    def create_alert_notification_target(
+        self, token: str | None, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/v1/line/alert-notifications/targets",
+            token=token,
+            json=payload,
+        )
+
+    def update_alert_notification_target(
+        self, token: str | None, target_id: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            f"/api/v1/line/alert-notifications/targets/{target_id}",
+            token=token,
+            json=payload,
+        )
+
+    def delete_alert_notification_target(
+        self, token: str | None, target_id: int
+    ) -> None:
+        self._request(
+            "DELETE",
+            f"/api/v1/line/alert-notifications/targets/{target_id}",
+            token=token,
+        )
+
+    def test_alert_notification_target(
+        self, token: str | None, target_id: int
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/v1/line/alert-notifications/test",
+            token=token,
+            json={"target_id": target_id},
+        )
+
+    def alert_notification_deliveries(
+        self, token: str | None, *, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            "/api/v1/line/alert-notifications/deliveries",
+            token=token,
+            params={"limit": limit},
+        )
+
     def message_template_state(self, token: str | None) -> dict[str, Any]:
         return self._request("GET", "/api/config/message-templates/state", token=token)
 
