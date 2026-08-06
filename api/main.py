@@ -32,6 +32,7 @@ from api.routes import (
     line_admin_binding,
     line_alert_notifications,
     line_monitoring,
+    line_order_groups,
     line_rich_menus,
     line_reviews,
     line_staff_verification,
@@ -111,6 +112,7 @@ app.include_router(line_admin.router)
 app.include_router(line_admin_binding.router)
 app.include_router(line_alert_notifications.router)
 app.include_router(line_monitoring.router)
+app.include_router(line_order_groups.router)
 app.include_router(line_tasks.router)
 app.include_router(line_rich_menus.router)
 app.include_router(line_reviews.router)

@@ -23,7 +23,14 @@ FILTER_KEY = "line_task_filter_signature"
 OPERATE_ROLES = {"line_agent", "line_manager", "system_admin"}
 RUN_NOW_ROLES = {"line_manager", "system_admin"}
 STATUSES = ["pending", "processing", "sent", "failed", "cancelled"]
-TASK_TYPES = ["line_push", "rag_reply", "rich_menu_link", "rich_menu_unlink"]
+TASK_TYPES = [
+    "line_push",
+    "line_push_messages",
+    "rag_reply",
+    "rich_menu_link",
+    "rich_menu_unlink",
+    "order_group_invite",
+]
 TAIPEI_TIMEZONE = ZoneInfo("Asia/Taipei")
 STATUS_LABELS = {
     "pending": "等待發送",
@@ -34,9 +41,11 @@ STATUS_LABELS = {
 }
 TASK_TYPE_LABELS = {
     "line_push": "LINE 訊息",
+    "line_push_messages": "LINE 圖文訊息",
     "rag_reply": "自動回覆",
     "rich_menu_link": "套用 LINE 選單",
     "rich_menu_unlink": "移除 LINE 選單",
+    "order_group_invite": "訂單群組邀請",
 }
 
 

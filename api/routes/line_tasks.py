@@ -113,7 +113,7 @@ def task_detail(task_id: int):
 def cancel_task(task_id: int, payload: LineTaskActionRequest, request: Request):
     try:
         result = cancel_line_task(task_id)
-    except (LineTaskNotFoundError, LineTaskStateConflictError) as exc:
+    except (LineTaskNotFoundError, LineTaskStateConflictError, ValueError) as exc:
         _raise_task_error(exc)
     _set_task_audit(
         request,
@@ -152,7 +152,7 @@ def run_task_now(task_id: int, payload: LineTaskActionRequest, request: Request)
 def retry_task(task_id: int, payload: LineTaskActionRequest, request: Request):
     try:
         result = retry_line_task(task_id)
-    except (LineTaskNotFoundError, LineTaskStateConflictError) as exc:
+    except (LineTaskNotFoundError, LineTaskStateConflictError, ValueError) as exc:
         _raise_task_error(exc)
     _set_task_audit(
         request,

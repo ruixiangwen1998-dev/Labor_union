@@ -19,6 +19,11 @@ import requests
 
 from services.db_service import get_connection as get_db_connection
 from services.line_monitor_service import monitor_instance_id, record_service_heartbeat
+from services.line_order_group_service import (
+    build_invite_flex_message,
+    expire_stale_invite_tasks,
+    finalize_invite_task,
+)
 from services.line_rich_menu_service import (
     import_legacy_rich_menu_ids,
     next_publication_run_at,
@@ -219,6 +224,8 @@ def _execute_task(task: dict[str, Any]) -> tuple[bool, bool, str, str]:
     if task_type == "line_push_messages":
         payload = json.loads(task.get("payload_json") or "{}")
         return _push_messages(task, payload.get("messages") or [])
+    if task_type == "order_group_invite":
+        return _push_messages(task, build_invite_flex_message(task))
     if task_type == "rag_reply":
         payload = json.loads(task.get("payload_json") or "{}")
         return _push_text(task, _rag_answer(payload.get("user_text", "")))
@@ -322,6 +329,7 @@ def _finish_task(task: dict[str, Any], result: tuple[bool, bool, str, str]) -> s
                     (code, message[:4000], task["id"]),
                 )
                 final_status = "failed"
+            finalize_invite_task(cursor, task, final_status)
             conn.commit()
             return final_status
     finally:
@@ -352,10 +360,14 @@ async def worker_loop() -> None:
     if imported:
         print(f"[LINE Worker] Imported {imported} legacy Rich Menu ID(s)")
     await asyncio.to_thread(_recover_stale_tasks)
+    expired = await asyncio.to_thread(expire_stale_invite_tasks)
+    if expired:
+        print(f"[LINE Worker] Expired and redacted {expired} stale group invite task(s)")
     await asyncio.to_thread(recover_stale_publications)
     while True:
         try:
             _last_worker_cycle_at = _utc_now_naive()
+            await asyncio.to_thread(expire_stale_invite_tasks)
             await process_due_tasks()
             await asyncio.to_thread(process_due_publications)
             _wakeup_event.clear()

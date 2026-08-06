@@ -346,6 +346,48 @@ class LineAdminApiClient:
             json={"reason": reason},
         )
 
+    def line_order_groups(
+        self,
+        token: str | None,
+        *,
+        case_no: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            "/api/v1/line/order-groups",
+            token=token,
+            params={"case_no": case_no, "status": status},
+        )
+
+    def line_order_group_detail(
+        self, token: str | None, binding_id: int
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/api/v1/line/order-groups/{binding_id}", token=token
+        )
+
+    def line_order_group_by_case(
+        self, token: str | None, case_no: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/api/v1/line/order-groups/by-case/{case_no}", token=token
+        )
+
+    def unbind_line_order_group(
+        self,
+        token: str | None,
+        binding_id: int,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/v1/line/order-groups/{binding_id}/unbind",
+            token=token,
+            json={"reason": reason},
+        )
+
     def line_menu_state(self, token: str | None) -> dict[str, Any]:
         return self._request("GET", "/api/config/line-menus/state", token=token)
 

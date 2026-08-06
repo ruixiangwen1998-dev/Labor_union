@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: ui/pages/order/tab2_assign.py
-功能說明: Tab 2 月嫂配對中心 REST API 遷移版 (OrderUI_Tab2_Assign)
+功能說明: 月嫂配對與指派頁，並顯示訂單 LINE 服務群組建立與成員進度
 ================================================================================
 """
 
@@ -136,6 +136,49 @@ def _single_caregiver_covers_service_period(order, *, headers):
     return bool(availability.get("complete_combinations"))
 
 
+def _render_line_order_group_status(case_no: str, *, headers: dict[str, str]) -> None:
+    """Show a staff-friendly group status without exposing LINE group/user IDs."""
+    st.markdown("#### LINE 服務群組")
+    try:
+        group = _api_request(
+            f"/api/v1/line/order-groups/by-case/{case_no}",
+            headers=headers,
+        )
+    except ValueError as exc:
+        if "HTTP 404" in str(exc):
+            st.info(
+                "尚未建立服務群組。請先在 LINE 建立群組並加入官方 Bot，"
+                f"再由工會人員輸入「綁定訂單 {case_no}」。"
+            )
+        else:
+            st.warning(f"暫時無法讀取 LINE 群組狀態：{exc}")
+        return
+    status_labels = {
+        "awaiting_invite": "已綁定，等待邀請",
+        "inviting": "邀請發送中",
+        "active": "媽媽與月嫂已加入",
+        "left": "官方 Bot 已離開群組",
+        "replaced": "群組已更換",
+        "cancelled": "群組已解除綁定",
+    }
+    st.success(status_labels.get(group.get("status"), group.get("status") or "狀態不明"))
+    member_labels = {
+        "not_ready": "尚未綁定 LINE",
+        "pending": "等待發送邀請",
+        "sent": "邀請已送出",
+        "joined": "已加入群組",
+        "failed": "邀請發送失敗",
+        "left": "已離開群組",
+    }
+    columns = st.columns(2)
+    for index, member in enumerate(group.get("members") or []):
+        who = "媽媽" if member.get("participant_type") == "client" else "月嫂"
+        columns[index % 2].metric(
+            who,
+            member_labels.get(member.get("invitation_status"), "狀態不明"),
+        )
+
+
 def _render_tab2_assign(
     orders_data,
     clients,
@@ -207,6 +250,8 @@ def _render_tab2_assign(
             st.write(f"- **自費預估合計**: {safe_int(target_order.get('total_employer_self_pay_payable')):,} 元")
             if target_order['order_status'] == '訂單取消':
                 st.error(f"- **取消原因**: {target_order.get('cancel_reason') or '未註明'}")
+        st.markdown("---")
+        _render_line_order_group_status(str(target_case_no), headers=admin_headers)
 
     with sub_tab2:
         st.markdown(f"#### ⚡ 4步智慧配對與指派 (案件 #{target_case_no})")

@@ -1,4 +1,4 @@
-# 月嫂 LIFF 驗證、LINE 主動監控、雙向恢復與 DB 結構防呆
+# LINE 訂單群組邀請、月嫂 LIFF 驗證、主動監控與雙向恢復
 
 ## 更新摘要
 
@@ -7,6 +7,7 @@
 1. 月嫂透過 LIFF 輸入基本資料，和既有月嫂資料比對後交由工會人員人工核准並綁定 LINE。
 2. LINE 系統改為背景主動監控，不需要打開管理頁才開始檢查。
 3. 開發環境的 Monitor 與服務監督器改成同層獨立程序，可互相偵測、受控重啟，取消外層批次 watchdog。
+4. 訂單可綁定 LINE 服務群組，安全地轉送一次性邀請並追蹤媽媽與月嫂加入狀態。
 
 對應尚未推送的主要提交：
 
@@ -88,6 +89,40 @@ LINE Monitor
 - 完整測試：812 項通過。
 - 另有 4 項既有訂單／表單 Streamlit AppTest 因固定 3 秒時限逾時，與本次 LINE 修改無關且和前次結果相同。
 - migration 已套用開發 DB，未清空既有資料。
+- 未建立或遺留一次性 Python 檔案。
+
+## 2026-08-04 訂單 LINE 服務群組綁定與安全邀請轉送
+
+### 新增功能
+
+- 工會人員可在 LINE 群組輸入「綁定訂單 案件編號」，將目前群組綁到指定訂單。
+- 只有「發送邀請連結 LINE網址」完整指令會把邀請 Flex 卡片可靠發送給媽媽與月嫂。
+- 追蹤預期成員的邀請、加入、離開與群組生命週期；LINE 管理中心和訂單配對頁可直接查看進度。
+- 邀請網址只在待處理／自動重試期間短暫保存，終態或 24 小時逾期即遮蔽，且不寫入明文 Webhook 紀錄或管理 API。
+
+### 新增檔案
+
+- `services/line_order_group_service.py`：權限、綁定、邀請任務、Flex、成員事件與敏感資料遮蔽。
+- `api/routes/line_order_groups.py`、`api/schemas/line_order_groups.py`：群組清單、明細與解除綁定 API。
+- `ui/components/line_order_group_manager.py`：服務人員可讀的訂單群組管理介面。
+- `db/schema_parts/107_line_order_groups.sql`：群組生命週期與預期成員 migration。
+- `tests/test_line_order_groups.py`：命令、網址驗證、Flex、遮蔽及 Schema 回歸。
+
+### 主要修改檔案
+
+- `line/line_bot.py`：加入群組提示、綁定／邀請指令與 memberJoined／memberLeft／leave 處理。
+- `line/worker.py`：發送群組邀請 Flex、24 小時逾期處理及任務終態遮蔽。
+- `services/webhook_event_service.py`、`services/line_task_admin_service.py`：Webhook 與管理 API 隱藏邀請網址，取消後立即清除且禁止重送已遮蔽任務。
+- `api/main.py`、`ui/api_clients/line_api_client.py`：掛載並串接新 API。
+- `ui/pages/07_line_management.py`、`ui/pages/order/tab2_assign.py`：新增群組管理頁與訂單群組狀態。
+- `db/schema.sql`、`config/README_CONFIG.md`：補齊完整 Schema 與操作規格。
+- `.gitignore`：忽略本機 `backups/`，避免含開發資料的 SQL 備份被誤提交。
+
+### 驗證結果
+
+- 新功能與既有 LINE 任務、通知、後台綁定、月嫂驗證、監控及 API 共 57 項測試通過；完整測試 1604 項通過。
+- Python compileall 與 Git diff 格式檢查通過。
+- 已先備份 `union_db`，再只套用 `107_line_order_groups.sql` 增量 migration；未執行會重建整個 DB 的 `scripts/init_db.py`，既有管理員帳號保留。
 - 未建立或遺留一次性 Python 檔案。
 
 ## 2026-08-02 工會人員雙頁 Rich Menu 與管理中心快捷訊息

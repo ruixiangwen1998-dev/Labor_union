@@ -1,7 +1,7 @@
 """
 ================================================================================
 檔案名稱: ui/pages/07_line_management.py
-功能說明: Streamlit LINE 管理中心主頁，整合主動監控、訊息、自動通知、選單、表單、人工確認與發送紀錄
+功能說明: Streamlit LINE 管理中心主頁，整合監控、訊息、訂單群組、選單、表單與人工確認
 ================================================================================
 """
 
@@ -17,6 +17,7 @@ from ui.components.line_schedule_manager import render_schedule_manager
 from ui.components.line_task_manager import render_task_manager
 from ui.components.line_health_monitor import render_line_health_monitor
 from ui.components.line_alert_notification_manager import render_alert_notification_manager
+from ui.components.line_order_group_manager import render_order_group_manager
 from ui.api_clients.line_api_client import LineAdminApiClient, LineAdminApiError
 
 
@@ -137,6 +138,7 @@ def show() -> None:
             "LINE 下方選單",
             "LINE 表單",
             "待確認申請",
+            "訂單群組",
             "客服入口",
             "操作紀錄",
         ]
@@ -162,10 +164,13 @@ def show() -> None:
     with tabs[5]:
         render_review_manager(client, token, profile)
 
+    with tabs[6]:
+        render_order_group_manager(client, token, profile)
+
     panels = [
         ("客服入口", "工會人員客服系統"),
         ("操作紀錄", "管理員異動稽核"),
     ]
-    for tab, (name, description) in zip(tabs[6:], panels):
+    for tab, (name, description) in zip(tabs[7:], panels):
         with tab:
             _planned_panel(name, description)

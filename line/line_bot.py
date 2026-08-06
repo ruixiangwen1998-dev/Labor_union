@@ -52,6 +52,17 @@ from services.line_alert_notification_service import (
     disable_notification_group,
     unbind_notification_group,
 )
+from services.line_order_group_service import (
+    INVITE_COMMAND_RE,
+    ORDER_BIND_RE,
+    LineOrderGroupError,
+    bind_order_group,
+    create_invite_tasks,
+    mark_group_left,
+    record_joined_members,
+    record_left_members,
+    redact_invite_text,
+)
 
 # 載入環境變數
 load_dotenv()
@@ -904,6 +915,8 @@ async def line_webhook(request: Request):
                             to_user_id=group_id,
                             message_content=(
                                 "官方 Bot 已加入群組。\n"
+                                "若這是媽媽、月嫂與工會的訂單服務群組，請由已綁定後台帳號的工會人員輸入：\n"
+                                "綁定訂單 案件編號\n\n"
                                 "若要把本群組設為系統異常通知群組，請由 LINE 主管或系統管理員輸入：\n"
                                 "綁定異常通知群組"
                             ),
@@ -916,6 +929,53 @@ async def line_webhook(request: Request):
                     group_id = source.get("groupId", "")
                     if group_id:
                         disable_notification_group(cursor, group_id)
+                        mark_group_left(cursor, group_id)
+
+                elif event_type == "memberJoined":
+                    source = event.get("source", {})
+                    group_id = source.get("groupId", "")
+                    joined_user_ids = [
+                        member.get("userId")
+                        for member in (event.get("joined") or {}).get("members", [])
+                        if member.get("userId")
+                    ]
+                    if group_id and joined_user_ids:
+                        join_result = record_joined_members(cursor, group_id, joined_user_ids)
+                        if join_result.get("case_no"):
+                            response_text = (
+                                f"已確認訂單 {join_result['case_no']} 的成員加入。"
+                                if join_result.get("matched")
+                                else "有新成員加入，但不在本訂單預期名單中，請工會人員確認。"
+                            )
+                            enqueue_line_task(
+                                cursor,
+                                to_user_id=group_id,
+                                message_content=response_text,
+                                source_event_id=event.get("webhookEventId"),
+                                idempotency_key=f"order-group-member-joined:{event.get('webhookEventId')}",
+                            )
+
+                elif event_type == "memberLeft":
+                    source = event.get("source", {})
+                    group_id = source.get("groupId", "")
+                    left_user_ids = [
+                        member.get("userId")
+                        for member in (event.get("left") or {}).get("members", [])
+                        if member.get("userId")
+                    ]
+                    if group_id and left_user_ids:
+                        leave_result = record_left_members(cursor, group_id, left_user_ids)
+                        if leave_result.get("matched"):
+                            enqueue_line_task(
+                                cursor,
+                                to_user_id=group_id,
+                                message_content=(
+                                    f"訂單 {leave_result['case_no']} 的預期成員已離開群組，"
+                                    "請工會人員確認是否需要重新邀請。"
+                                ),
+                                source_event_id=event.get("webhookEventId"),
+                                idempotency_key=f"order-group-member-left:{event.get('webhookEventId')}",
+                            )
                 
                 elif event_type == "postback":
                     postback_data = event["postback"].get("data", "")
@@ -994,10 +1054,60 @@ async def line_webhook(request: Request):
                         source = event.get("source", {})
                         user_id = source.get("userId", "")
                         reply_token = event.get("replyToken", "")
-                        print(f"[LINE Webhook] Text message received from {user_id}: {user_text}")
+                        print(
+                            f"[LINE Webhook] Text message received from {user_id}: "
+                            f"{redact_invite_text(user_text)}"
+                        )
 
                         command = user_text.strip()
                         group_id = source.get("groupId", "")
+                        bind_match = ORDER_BIND_RE.fullmatch(command)
+                        invite_match = INVITE_COMMAND_RE.fullmatch(command)
+                        if bind_match or invite_match:
+                            if not group_id:
+                                enqueue_line_task(
+                                    cursor,
+                                    to_user_id=user_id,
+                                    message_content="此指令只能在要設定的 LINE 訂單群組中使用。",
+                                    source_event_id=event.get("webhookEventId"),
+                                    idempotency_key=f"order-group-private:{event.get('webhookEventId')}",
+                                )
+                                continue
+                            try:
+                                if bind_match:
+                                    result = bind_order_group(
+                                        cursor,
+                                        group_id=group_id,
+                                        case_no=bind_match.group(1),
+                                        actor_line_user_id=user_id,
+                                    )
+                                    response_text = (
+                                        f"訂單 {result['case_no']} 已綁定本服務群組。\n"
+                                        "請由工會人員貼上：發送邀請連結 https://line.me/..."
+                                    )
+                                else:
+                                    result = create_invite_tasks(
+                                        cursor,
+                                        group_id=group_id,
+                                        actor_line_user_id=user_id,
+                                        invite_url=invite_match.group(1),
+                                        source_event_id=event.get("webhookEventId"),
+                                    )
+                                    sent_count = len(result["created"])
+                                    response_text = f"已建立 {sent_count} 筆訂單群組邀請發送任務。"
+                                    if result["skipped"]:
+                                        response_text += "\n未發送：" + "、".join(result["skipped"])
+                            except LineOrderGroupError as exc:
+                                response_text = str(exc)
+                            enqueue_line_task(
+                                cursor,
+                                to_user_id=group_id,
+                                message_content=response_text,
+                                source_event_id=event.get("webhookEventId"),
+                                idempotency_key=f"order-group-command:{event.get('webhookEventId')}",
+                            )
+                            continue
+
                         if command in {"綁定異常通知群組", "解除異常通知群組"}:
                             if not group_id:
                                 enqueue_line_task(

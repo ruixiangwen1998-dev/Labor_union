@@ -14,10 +14,22 @@ from zoneinfo import ZoneInfo
 import pymysql
 
 from services.db_service import get_connection
+from services.line_order_group_service import (
+    INVITE_REDACTED_VALUE,
+    finalize_invite_task,
+    sanitize_task_for_output,
+)
 
 
 TASK_STATUSES = {"pending", "processing", "sent", "failed", "cancelled"}
-TASK_TYPES = {"line_push", "rag_reply", "rich_menu_link", "rich_menu_unlink"}
+TASK_TYPES = {
+    "line_push",
+    "line_push_messages",
+    "rag_reply",
+    "rich_menu_link",
+    "rich_menu_unlink",
+    "order_group_invite",
+}
 TAIPEI_TIMEZONE = ZoneInfo("Asia/Taipei")
 
 
@@ -166,7 +178,7 @@ def get_line_task(task_id: int) -> dict[str, Any]:
                 (task_id,),
             )
             attempts = list(cursor.fetchall())
-        return {"task": task, "attempts": attempts}
+        return {"task": sanitize_task_for_output(task), "attempts": attempts}
     finally:
         conn.close()
 
@@ -193,19 +205,36 @@ def _transition_task(task_id: int, *, action: str, allowed_status: str, sql: str
 
 
 def cancel_line_task(task_id: int) -> dict:
-    result = _transition_task(
-        task_id,
-        action="取消",
-        allowed_status="pending",
-        sql="""
-            UPDATE line_tasks
-            SET status='cancelled', next_retry_at=NULL,
-                processing_started_at=NULL
-            WHERE id=%s
-        """,
-    )
-    result["status"] = "cancelled"
-    return result
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+            cursor.execute("SELECT * FROM line_tasks WHERE id=%s FOR UPDATE", (task_id,))
+            task = cursor.fetchone()
+            if not task:
+                raise LineTaskNotFoundError(f"找不到 LINE 任務 #{task_id}")
+            if task["status"] != "pending":
+                raise LineTaskStateConflictError(task_id, task["status"], "取消")
+            cursor.execute(
+                """
+                UPDATE line_tasks SET status='cancelled', next_retry_at=NULL,
+                    processing_started_at=NULL WHERE id=%s
+                """,
+                (task_id,),
+            )
+            finalize_invite_task(cursor, task, "cancelled")
+        conn.commit()
+        return {
+            "task_id": task_id,
+            "previous_status": "pending",
+            "action": "取消",
+            "status": "cancelled",
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def run_line_task_now(task_id: int) -> dict:
@@ -224,6 +253,12 @@ def run_line_task_now(task_id: int) -> dict:
 
 
 def retry_line_task(task_id: int) -> dict:
+    task = get_line_task(task_id)["task"]
+    if (
+        task.get("task_type") == "order_group_invite"
+        and INVITE_REDACTED_VALUE in str(task.get("payload_json") or "")
+    ):
+        raise ValueError("邀請網址已清除，請由工會人員在群組重新輸入發送指令。")
     result = _transition_task(
         task_id,
         action="重新執行",

@@ -308,3 +308,20 @@ line_alert_deliveries。個人通知只能選擇已綁定 LINE 的 admin_users�
 若 MySQL 正在故障，Monitor 會改讀 .monitor_state/line_alert_targets.json 的最近一次
 通知對象快取，並以 .monitor_state/line_alert_fallback_state.json 防止每 15 秒重複
 傳送相同 DB 異常。快取只保存 LINE 目的地與通知偏好，不保存密碼、Token 或會員個資。
+
+## 訂單 LINE 服務群組
+
+工會人員需先完成後台帳號與 LINE 綁定，並具備 `line_agent` 以上權限。Bot 被加入媽媽、
+月嫂與工會的服務群組後，依序輸入：
+
+```text
+綁定訂單 115000001
+發送邀請連結 https://line.me/ti/g/...
+```
+
+只有第二種完整指令會觸發轉送；單獨貼網址視為一般訊息。邀請網址會短暫保存在
+`line_tasks.payload_json` 供 Worker 重試，送達、取消、永久失敗或超過 24 小時後即
+遮蔽。Webhook 收件匣、終端機及管理 API 不顯示明文網址。
+
+管理 API 位於 `/api/v1/line/order-groups`。清單與明細至少需要 `line_viewer`；解除
+綁定需要 `line_manager`。服務人員不必輸入 groupId，主要綁定入口仍是 LINE 群組指令。

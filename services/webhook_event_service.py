@@ -8,6 +8,8 @@
 import json
 import pymysql
 
+from services.line_order_group_service import redact_invite_event
+
 
 def register_event(cursor, event: dict) -> bool:
     event_id = event.get("webhookEventId")
@@ -26,7 +28,7 @@ def register_event(cursor, event: dict) -> bool:
                 event_id, event.get("type", "unknown"), source.get("type"),
                 source.get("userId"), source.get("groupId"), event.get("timestamp"),
                 bool((event.get("deliveryContext") or {}).get("isRedelivery")),
-                json.dumps(event, ensure_ascii=False),
+                json.dumps(redact_invite_event(event), ensure_ascii=False),
             ),
         )
         return True
