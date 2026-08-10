@@ -86,7 +86,7 @@ def run_fastapi() -> subprocess.Popen[bytes]:
 
 def run_line_worker() -> subprocess.Popen[bytes]:
     return subprocess.Popen(
-        [sys.executable, "scripts/run_line_worker.py"],
+        [sys.executable, "-m", "scripts.run_line_worker"],
         cwd=PROJECT_ROOT,
         shell=False,
     )
@@ -94,7 +94,7 @@ def run_line_worker() -> subprocess.Popen[bytes]:
 
 def run_monitor() -> subprocess.Popen[bytes]:
     return subprocess.Popen(
-        [sys.executable, "scripts/run_service_monitor.py"],
+        [sys.executable, "-m", "scripts.run_service_monitor"],
         cwd=PROJECT_ROOT,
         shell=False,
     )
